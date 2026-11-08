@@ -42,11 +42,22 @@ Vulkan 1.3 or OpenGL 3.3.
    nothing is extracted; if you move the file, the app asks again.
 
 Play with the touch controls drawn over the game (a stick on the left,
-the buttons on the right, drag elsewhere to turn the camera) or a
-controller. Settings are in Options, in the PokéPark Pad.
+the buttons on the right, -, + and View at the top left, drag elsewhere
+to turn the camera) or a controller. Settings are in Options, in the
+PokéPark Pad.
 
-**Requirements:** Android 11 or later on a 64-bit (arm64) phone with
-Vulkan 1.3. Tested on one phone (Adreno 830 GPU) so far.
+**Dual-screen handhelds.** On a handheld with a second built-in screen,
+such as the AYN Thor, the second screen becomes the PokéPark Pad: your
+friends list (scroll it by touch) and the zone's map, with its name,
+your berries and the friends who live there. Options > Dual screen,
+shown only on these handhelds, turns it on or off, swaps the screens,
+keeps the minimap on the game's screen too, and can show the map
+without the friends list. The Retroid Dual Screen Add-On should work
+the same way, but hasn't been tested.
+
+**Requirements:** Android 11 or later on a 64-bit (arm64) phone or
+handheld with Vulkan 1.3. Tested on a phone (Adreno 830 GPU) and the AYN
+Thor so far.
 
 ## Improvements over the Wii version
 
@@ -78,7 +89,13 @@ Vulkan 1.3. Tested on one phone (Adreno 830 GPU) so far.
   slots and two controller slots.
 - **Button prompts match your device.** The game's on-screen Wii Remote
   icons are redrawn as the key or button they're bound to, switching
-  between keyboard and controller as you use them.
+  between keyboard and controller as you use them. The title screen,
+  the minigames' instructions and Primeape's Iron Tail tip name your
+  keys or buttons too, instead of telling you to shake or point the
+  remote.
+- **First person without a pointer.** The game's first-person view,
+  which on the Wii needed the remote pointed at the screen, is a button
+  (the right stick's click, or View on Android's touch controls).
 - **Motion controls mapped.** The minigames' shaking, tilting, swinging
   and pointing are mapped to keys, the mouse and the sticks.
 - Camera speed and inverted camera settings.
@@ -124,7 +141,7 @@ Optional changes to the game's balance, all off (100%) by default:
 | + | PokéPark Pad | P | Start |
 | - | Map | M | Back |
 | | First person | Home / H | Right stick click |
-| Shake | Iron Tail | Q / Left Shift (hold) | LB (hold) |
+| Shake | Iron Tail (in battles) | Q, Left Shift or E | LB or RB |
 | Shake (minigames) | Running, swinging | Q and E by turns | LB and RB by turns |
 
 In first person, the mouse or right stick looks around and - takes a
@@ -159,9 +176,9 @@ releases it, and a click captures it again.
   that is untested.
 - **Input:** no Wii Remote pointer or Nunchuk. The game is played
   sideways, so neither is needed for the main game.
-- **Android:** no rumble yet, and first person needs a controller: the touch controls have no button for it.
-- It has been tested on one PC and one phone, so problems on other
-  hardware are likely: please report them.
+- **Android:** no rumble yet.
+- It has been tested on one PC, one phone and the AYN Thor, so problems
+  on other hardware are likely: please report them.
 
 ## Building
 
