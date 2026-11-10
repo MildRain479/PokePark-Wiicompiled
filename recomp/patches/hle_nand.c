@@ -414,11 +414,16 @@ static void ensure_sysconf(void) {
     HLE_LOG("NAND: wrote default system settings to SYSCONF");
 }
 
+/* 16:9 unless the aspect ratio setting is 4:3 (hle_set_widescreen, as
+ * settings are loaded) or RECOMP_WIDESCREEN=0; fixed once it is first
+ * asked, as the game asks once. */
+static int sWidescreenSet = 1;
+void hle_set_widescreen(int on) { sWidescreenSet = on; }
 int hle_widescreen(void) {
     static int on = -1;
     if (on < 0) {
         const char* e = getenv("RECOMP_WIDESCREEN");
-        on = !(e && *e == '0');
+        on = e && *e ? *e != '0' : sWidescreenSet;
     }
     return on;
 }

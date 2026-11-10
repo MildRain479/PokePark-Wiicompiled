@@ -46,6 +46,23 @@ void win_create(void) {
         sPixelAspect = 16.0 / 9.0 * 456.0 / 640.0;
         r.right = (LONG)(r.right * sPixelAspect + 0.5);
     }
+    {
+        /* At the canvas's shape (the aspect ratio setting), made smaller
+         * if that's more than the screen has room for. */
+        RECT work;
+        int mx, my;
+        gx_canvas(&mx, &my);
+        r.right += (LONG)(4 * mx * sPixelAspect + 0.5);
+        r.bottom += 4 * my;
+        if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0)) {
+            double k = 0.9 * (work.right - work.left) / r.right, kh = 0.9 * (work.bottom - work.top) / r.bottom;
+            if (kh < k) k = kh;
+            if (k < 1) {
+                r.right = (LONG)(r.right * k);
+                r.bottom = (LONG)(r.bottom * k);
+            }
+        }
+    }
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = wnd_proc;
     wc.hInstance = GetModuleHandleA(NULL);

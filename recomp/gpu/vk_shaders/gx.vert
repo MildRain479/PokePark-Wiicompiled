@@ -9,7 +9,8 @@
 // From word pc.xf of the data buffer on, which the descriptor's offset
 // gives: a uniform buffer, read faster than a storage one.
 layout(std140, set = 1, binding = 1) uniform XF { uvec4 xu[(0x360 + 8 + 8 * 12) / 4]; };
-layout(push_constant) uniform Draw { uint xf, tev; uint tex[8]; } pc;
+// canvas: what clip space's x and y are multiplied by (gx_canvas_draw).
+layout(push_constant) uniform Draw { uint xf, tev; uint tex[8]; vec2 canvas; } pc;
 
 layout(location = 0) in uvec4 a_mtx0;
 layout(location = 1) in uvec4 a_mtx1;
@@ -159,7 +160,7 @@ void main() {
         ? vec4(p0 * world.x + p1 * world.z, p2 * world.y + p3 * world.z, p4 * world.z + p5, -world.z)
         : vec4(p0 * world.x + p1, p2 * world.y + p3, p4 * world.z + p5, 1.0);
     // Depth reversed, as in gl_backend.c: 0..w, far to near.
-    gl_Position = vec4(clip.x, clip.y, -clip.z, clip.w);
+    gl_Position = vec4(clip.x * pc.canvas.x, clip.y * pc.canvas.y, -clip.z, clip.w);
     v_col0 = channel(0, a_col0, world, n);
     v_col1 = channel(1, a_col1, world, n);
 #if TEX_IO > 0

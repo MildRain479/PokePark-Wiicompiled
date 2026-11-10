@@ -26,6 +26,8 @@ static int valid_frame_rate(int fps) {
 }
 
 void hle_set_fov(int percent); /* hle_camera.c */
+void hle_set_widescreen(int on); /* hle_nand.c */
+static const char* const kAspectNames[ASPECTS] = {"4:3", "16:9", "16:10", "21:9"};
 void hle_set_text_speed(int steps);  /* hle_modifiers.c */
 void hle_set_berry_rate(int percent);
 void hle_set_prices(int percent);
@@ -203,6 +205,8 @@ void settings_save(void) {
     fprintf(f, "fov = %d ; field of view in the park, percent of the game's: %d-%d\n", g_settings.fov, FOV_MIN,
             FOV_MAX);
     fprintf(f, "aniso = %d ; anisotropic texture filtering: 1 (off), 2, 4, 8 or 16\n", g_settings.aniso);
+    fprintf(f, "aspect = %s ; the picture's shape: 4:3 (the game's own, from the next start), 16:9, 16:10 or 21:9\n",
+            kAspectNames[g_settings.aspect]);
 #ifdef __ANDROID__
     fprintf(f, "\n[dual_screen] ; only on a handheld with two screens; elsewhere all off\n");
     fprintf(f, "on = %d ; the second screen used, for the Pad's pages and the map\n", g_settings.dual_screen);
@@ -260,6 +264,7 @@ void settings_load(void) {
     g_settings.msaa = 1;
     g_settings.aniso = 1;
     g_settings.renderer = RENDERER_VULKAN; /* OpenGL draws if it can't start */
+    g_settings.aspect = ASPECT_16_9;
     g_settings.rumble = 2;
     g_settings.touch_controls = 1;
     g_settings.dual_screen = 1;
@@ -306,6 +311,12 @@ void settings_load(void) {
             if (!strcmp(name, "msaa")) g_settings.msaa = valid_msaa(atoi(p));
             if (!strcmp(name, "aniso")) g_settings.aniso = valid_aniso(atoi(p));
             if (!strcmp(name, "renderer")) g_settings.renderer = strstr(p, "vulkan") ? RENDERER_VULKAN : RENDERER_OPENGL;
+            if (!strcmp(name, "aspect")) {
+                char shape[8] = "";
+                sscanf(p, " %7s", shape);
+                for (i = 0; i < ASPECTS && strcmp(shape, kAspectNames[i]); i++) {}
+                if (i < ASPECTS) g_settings.aspect = i;
+            }
             if (!strcmp(name, "frame_rate")) g_settings.frame_rate = valid_frame_rate(atoi(p));
             if (!strcmp(name, "minimap_top")) g_settings.minimap_top = atoi(p) != 0; /* (where it was) */
             if (!strcmp(name, "fov")) {
@@ -371,6 +382,7 @@ void settings_load(void) {
     }
     apply_frame_rate();
     hle_set_fov(g_settings.fov);
+    hle_set_widescreen(g_settings.aspect != ASPECT_4_3);
     apply_gameplay();
 }
 
@@ -410,6 +422,7 @@ void settings_step(int which, int d) {
         break;
     }
     case SET_RENDERER: g_settings.renderer = !g_settings.renderer; break;
+    case SET_ASPECT: g_settings.aspect = (g_settings.aspect + d + ASPECTS) % ASPECTS; break;
     case SET_TOUCH: g_settings.touch_controls = !g_settings.touch_controls; break;
     case SET_MINIMAP_TOP: g_settings.minimap_top = !g_settings.minimap_top; break;
     case SET_DUAL_SCREEN: g_settings.dual_screen = !g_settings.dual_screen; break;

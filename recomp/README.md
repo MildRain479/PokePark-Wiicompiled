@@ -113,7 +113,24 @@ layouts. It squeezes them into the EFB's 640 columns for a TV to
 stretch out; the EFB is rendered 4/3 as wide as it is scaled tall, so
 the stretched picture is at full resolution. Frames are shown at the
 shape they have on a TV, with black bars filling the rest of the
-window. THP movie frames are
+window.
+
+The Aspect ratio setting picks that shape. 4:3 sets the console up for
+a 4:3 TV, from the next start, and the game draws its own 4:3 layouts.
+16:10 and 21:9 (64:27) widen the 16:9 picture into a canvas
+(`gx_canvas`, `gx_frames.c`) with margins above and below or at the
+sides: the EFB is made that much larger, and each draw is placed on it
+(`gx_canvas_draw`). A draw of the world (a perspective projection whose
+far plane is past 2000: the park's cameras see to 9999) over the whole
+picture has its viewport grown to the canvas and its clip space shrunk
+as much (the vertex shader's `canvas`), so what was in the picture
+stays put and more of the world shows around it. A draw covering the
+whole picture otherwise (2D, or the 2D screens' 3D, which sees only to
+1000), in up to 64 vertices, is stretched over the canvas; other 2D
+stays where it is, in the middle, and the menus show at 16:9 with bars.
+EFB copies and the presented picture of the whole picture take in the
+margins; a copy written back to memory (the game's photos) is the
+picture's part of it. THP movie frames are
 decoded natively (`hle_thp.c`). EFB copies are converted to their copy
 format, and the EFB depth is stored reversed in a float buffer, for the
 precision GX scenes need near the far plane. 3D lighting is implemented
@@ -238,7 +255,7 @@ Diagnostics:
   tall; at 3 in 16:9 it is 2560x1368, pixel for pixel across a 1440p
   display.
 - `RECOMP_WIDESCREEN=0` sets the console up for a 4:3 TV instead of
-  16:9.
+  16:9 (`1` for 16:9), over the Aspect ratio setting.
 - `RECOMP_PAD_SCRIPT="<seconds>:<buttons> ..."` presses buttons at set
   times, for unattended runs: `"10:2 10.3: 22:right 22.3:"` presses 2 at
   10 s and right at 22 s. Buttons: up down left right a b 1 2 plus minus

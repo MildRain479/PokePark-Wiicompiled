@@ -616,6 +616,79 @@ void gxb_init(void) {
     g_host_frame_render = frame_render;
 }
 
+/* ------------------------------------------------------------------------ */
+/* The canvas */
+
+int hle_widescreen(void); /* hle_nand.c */
+
+void gx_canvas(int* mx, int* my) {
+    /* The picture is 16:9 in the game's 16:9 mode; its 4:3 mode has none. */
+    double pa = win_pixel_aspect(), want;
+    *mx = *my = 0;
+    if (!hle_widescreen()) return;
+    if (g_settings.aspect == ASPECT_16_10) want = 16.0 / 10.0;
+    else if (g_settings.aspect == ASPECT_21_9) want = 64.0 / 27.0; /* 2560 x 1080 */
+    else return;
+    if (GX_PICTURE_H * want > EFB_W * pa) *mx = (int)floor((GX_PICTURE_H * want / pa - EFB_W) / 2 + 0.5);
+    else *my = (int)floor((EFB_W * pa / want - GX_PICTURE_H) / 2 + 0.5);
+}
+
+int gx_canvas_whole(float x, float y, float w, float h) {
+    if (w < 0) {
+        x += w;
+        w = -w;
+    }
+    if (h < 0) {
+        y += h;
+        h = -h;
+    }
+    return x <= 1 && y <= 1 && x + w >= EFB_W - 1 && y + h >= GX_PICTURE_H - 1;
+}
+
+void gx_canvas_draw(const GXDrawState* st, int mx, int my, float vp[4], int sc[4], float k[2]) {
+    vp[0] = st->viewport[0] + mx;
+    vp[1] = st->viewport[1] + my;
+    vp[2] = st->viewport[2];
+    vp[3] = st->viewport[3];
+    k[0] = k[1] = 1;
+    if (st->canvas) {
+        /* The viewport grown about its middle by the canvas's size over
+         * the picture's; a 3D draw's clip space shrunk as much, so what
+         * was in the picture stays where it was. */
+        float gx = (float)(EFB_W + 2 * mx) / EFB_W, gy = (float)(GX_PICTURE_H + 2 * my) / GX_PICTURE_H;
+        vp[0] -= vp[2] * (gx - 1) / 2;
+        vp[2] *= gx;
+        vp[1] -= vp[3] * (gy - 1) / 2;
+        vp[3] *= gy;
+        if (st->canvas == 1) {
+            k[0] = 1 / gx;
+            k[1] = 1 / gy;
+        }
+    }
+    if ((mx || my) && gx_canvas_whole((float)st->scissor[0], (float)st->scissor[1],
+                                      (float)(st->scissor[2] - st->scissor[0]), (float)(st->scissor[3] - st->scissor[1]))) {
+        sc[0] = sc[1] = 0;
+        sc[2] = st->scissor[2] + 2 * mx;
+        sc[3] = st->scissor[3] + 2 * my;
+    } else {
+        sc[0] = st->scissor[0] + mx;
+        sc[1] = st->scissor[1] + my;
+        sc[2] = st->scissor[2] + mx;
+        sc[3] = st->scissor[3] + my;
+    }
+}
+
+void gx_canvas_rect(int mx, int my, int* x, int* y, int* w, int* h) {
+    if ((mx || my) && gx_canvas_whole((float)*x, (float)*y, (float)*w, (float)*h)) {
+        *w += *x + 2 * mx;
+        *h += *y + 2 * my;
+        *x = *y = 0;
+    } else {
+        *x += mx;
+        *y += my;
+    }
+}
+
 int gx_wanted_scale(int h) {
     const char* v = getenv("RECOMP_GX_SCALE");
     int s = v && atoi(v) > 0 ? atoi(v) : g_settings.scale;
@@ -744,6 +817,7 @@ typedef struct WriteBack {
     uint32_t addr;
     int target, w, h, fmt, intensity, stride;
     int waited;
+    int mx, my; /* the canvas's margins, if the copy was of the whole picture: then it has them too */
 } WriteBack;
 static WriteBack sWriteBacks[8];
 static int sWriteBackCount;
@@ -756,11 +830,15 @@ static void write_back(const WriteBack* b, int force) {
     uint8_t* full = sDev->copy_read ? sDev->copy_read(b->target, &tw, &th) : NULL;
     uint8_t* px = full ? (uint8_t*)malloc((size_t)b->w * b->h * 4) : NULL;
     if (px) {
-        /* Each EFB pixel: the average of those it was drawn as. */
+        /* Each EFB pixel: the average of those it was drawn as, in the
+         * picture's part of a copy grown to the canvas (photos stay the
+         * picture's shape). */
+        int ox = b->mx * tw / (b->w + 2 * b->mx), oy = b->my * th / (b->h + 2 * b->my);
+        int pw = tw - 2 * ox, ph = th - 2 * oy;
         for (y = 0; y < b->h; y++) {
-            int y0 = y * th / b->h, y1 = (y + 1) * th / b->h;
+            int y0 = oy + y * ph / b->h, y1 = oy + (y + 1) * ph / b->h;
             for (x = 0; x < b->w; x++) {
-                int x0 = x * tw / b->w, x1 = (x + 1) * tw / b->w, sx, sy, k, n = 0;
+                int x0 = ox + x * pw / b->w, x1 = ox + (x + 1) * pw / b->w, sx, sy, k, n = 0;
                 unsigned sum[4] = {0, 0, 0, 0};
                 if (y1 <= y0) y1 = y0 + 1;
                 if (x1 <= x0) x1 = x0 + 1;
@@ -857,6 +935,8 @@ void gxb_copy_to_texture(uint32_t addr, int x, int y, int w, int h, int fmt, int
     made.fmt = fmt;
     made.intensity = intensity;
     made.stride = stride;
+    made.mx = made.my = 0;
+    if (gx_canvas_whole((float)x, (float)y, (float)w, (float)h)) gx_canvas(&made.mx, &made.my);
     for (i = 0; i < sCopiesMadeCount && sCopiesMade[i].addr != addr; i++) {}
     if (i == sCopiesMadeCount) {
         if (sCopiesMadeCount < 32) sCopiesMadeCount++;

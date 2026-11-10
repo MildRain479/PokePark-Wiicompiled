@@ -26,6 +26,10 @@ enum {
 
 #define MAX_SCALE 6
 enum { RENDERER_OPENGL, RENDERER_VULKAN };
+/* The picture's shape: 4:3 is the game's own 4:3 mode (from the next
+ * start); 16:10 and 21:9 show more of the world above and below or at the
+ * sides of the game's 16:9 (gx_canvas, gx_frames.c). */
+enum { ASPECT_4_3, ASPECT_16_9, ASPECT_16_10, ASPECT_21_9, ASPECTS };
 #define MAX_MSAA 8
 
 typedef struct {
@@ -36,6 +40,7 @@ typedef struct {
     int fov;                 /* field of view, percent of the game's (tangent of half the angle) */
     int aniso;               /* anisotropic filtering: 1 (off), 2, 4, 8 or 16 */
     int renderer;            /* RENDERER_*: what draws, from the next start */
+    int aspect;              /* ASPECT_*: the picture's shape */
     int rumble;              /* controller rumble: 0 off, 1 light, 2 normal, 3 strong */
     int touch_controls;      /* Android: the touch screen's controls, shown while it was used last; 0 never */
     /* Android, on a handheld with two screens (second_screen_device):
@@ -80,7 +85,7 @@ void prompts_init(void);
 enum { SET_FULLSCREEN, SET_SCALE, SET_MSAA, SET_FRAME_RATE, SET_FOV, SET_SENSITIVITY, SET_INVERT, SET_ANISO,
        SET_RUMBLE, SET_TEXT_SPEED, SET_BERRIES, SET_PRICES,
        SET_DAMAGE_DEALT, SET_DAMAGE_TAKEN, SET_CHASE_SPEED, SET_RENDERER, SET_TOUCH, SET_UPDATES, SET_MINIMAP_TOP,
-       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST };
+       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT };
 /* Changes a setting a step (d: -1 or 1; on and off settings flip), applies
  * and saves it. */
 void settings_step(int which, int d);

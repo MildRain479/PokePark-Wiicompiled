@@ -72,6 +72,25 @@ typedef struct GXDevice {
 
 extern const GXDevice g_gl_device, g_vk_device;
 
+/* The canvas (the aspect ratio setting): the game's picture, EFB pixels
+ * 0-640 across and 0-456 down, with margins beside it (mx) or above and
+ * below it (my), whole EFB pixels, for a screen wider or taller than its
+ * 16:9; 0 and 0 otherwise. A device makes its EFB that much larger (EFB_W
+ * + 2 mx by EFB_H + 2 my) and places what it draws, copies and shows on
+ * it with these (gx_frames.c), taking the margins up with the display
+ * settings. */
+#define GX_PICTURE_H 456
+void gx_canvas(int* mx, int* my);
+/* Whether rectangle x, y, w, h (EFB pixels) is the whole picture. */
+int gx_canvas_whole(float x, float y, float w, float h);
+/* A draw on a canvas with margins mx, my: its viewport (x, y, w, h) and
+ * scissor (x0, y0, x1, y1) in EFB pixels from the canvas's top left
+ * corner, and k, what its clip-space x and y are multiplied by. */
+void gx_canvas_draw(const GXDrawState* st, int mx, int my, float vp[4], int sc[4], float k[2]);
+/* A rectangle of the EFB (a copy's, the one shown) on the canvas: moved
+ * by the margins, or, if it is the whole picture, the whole canvas. */
+void gx_canvas_rect(int mx, int my, int* x, int* y, int* w, int* h);
+
 /* The internal resolution for a client area h pixels tall: RECOMP_GX_SCALE,
  * else the settings', else the multiple whose picture (456 lines shown)
  * comes nearest the window, rounding up unless within a quarter step

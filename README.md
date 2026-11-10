@@ -75,6 +75,9 @@ Thor so far.
 - **Anti-aliasing.** 2x, 4x or 8x MSAA.
 - **Anisotropic filtering.** 2x to 16x, for sharp ground and walls at
   an angle.
+- **Aspect ratio.** 16:9 (the game's), its own 4:3, or 16:10 and 21:9
+  ultrawide, which show more of the park above and below or at the
+  sides. The HUD and menus stay at 16:9 in the middle.
 - **Field of view.** 80% to 150% of the game's, in the park.
 - **Vulkan and OpenGL renderers.** Vulkan is the default and the
   fastest. It falls back to OpenGL if Vulkan can't start.

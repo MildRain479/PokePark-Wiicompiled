@@ -35,8 +35,8 @@ double hle_vi_hz(void);
 /* What remote 0 had held at its last read (HOST_PAD_*). */
 uint32_t hle_wpad_held(void);
 
-/* Whether the console is set up for a 16:9 TV (RECOMP_WIDESCREEN, default
- * on; 0 for 4:3). The game then draws 16:9 pictures squeezed into its
+/* Whether the console is set up for a 16:9 TV (the aspect ratio setting,
+ * or RECOMP_WIDESCREEN: 1, 0 for 4:3). The game then draws 16:9 pictures squeezed into its
  * 640-pixel-wide frame, as the Wii does for a TV to stretch out. */
 int hle_widescreen(void);
 /* hle_game.c: whether the scene is a minigame (an attraction). */

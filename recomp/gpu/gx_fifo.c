@@ -1068,6 +1068,55 @@ static int origin_in_minimap(const GXDrawState* st) {
     return x >= kGxMinimapRect[0] && x < kGxMinimapRect[2] && y >= kGxMinimapRect[1] && y < kGxMinimapRect[3];
 }
 
+/* The canvas has margins (gx_canvas), as the frame started. */
+static int sCanvasOn;
+void gx_canvas(int* mx, int* my);                       /* gx_frames.c */
+int gx_canvas_whole(float x, float y, float w, float h); /* gx_frames.c */
+
+/* GXDrawState's canvas for a draw of count vertices at p, with the state
+ * st: 1 if it is the world in 3D (a perspective projection with a far
+ * plane past 2000) over the whole picture; 2 if it covers the whole
+ * picture otherwise (2D, or the 2D screens' 3D), in up to 64 vertices;
+ * else 0. */
+static int canvas_kind(const GXDrawState* st, const uint8_t* p, const VtxFormat* f, int count) {
+    static GXVertex v[64];
+    GXVertex tpl;
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    int i, persp = !xf[0x1026];
+    if (!sCanvasOn || !gx_canvas_whole(st->viewport[0], st->viewport[1], st->viewport[2], st->viewport[3])) return 0;
+    /* The park's cameras see to 9999; the 2D screens' 3D (the menus'
+     * boards, close-ups) only to 1000, and stays in the picture, as the
+     * rest of the screen does. */
+    if (persp && xf_float(0x1024) != 0 && xf_float(0x1025) / xf_float(0x1024) > 2000) return 1;
+    if (count > 64 || count <= 0) return 0;
+    vertex_template(&tpl);
+    for (i = 0; i < count; i++) v[i] = tpl;
+    read_vertices(p, f, v, count);
+    for (i = 0; i < count; i++) {
+        uint32_t m = (v[i].mtx[0] & 63) * 4;
+        const float* q = v[i].pos;
+        float wx = xf_float(m) * q[0] + xf_float(m + 1) * q[1] + xf_float(m + 2) * q[2] + xf_float(m + 3);
+        float wy = xf_float(m + 4) * q[0] + xf_float(m + 5) * q[1] + xf_float(m + 6) * q[2] + xf_float(m + 7);
+        float wz = xf_float(m + 8) * q[0] + xf_float(m + 9) * q[1] + xf_float(m + 10) * q[2] + xf_float(m + 11);
+        float cx, cy, x, y;
+        if (persp) {
+            if (wz >= 0) return 0; /* behind the camera */
+            cx = (xf_float(0x1020) * wx + xf_float(0x1021) * wz) / -wz;
+            cy = (xf_float(0x1022) * wy + xf_float(0x1023) * wz) / -wz;
+        } else {
+            cx = xf_float(0x1020) * wx + xf_float(0x1021);
+            cy = xf_float(0x1022) * wy + xf_float(0x1023);
+        }
+        x = st->viewport[0] + (cx + 1) * 0.5f * st->viewport[2];
+        y = st->viewport[1] + (1 - cy) * 0.5f * st->viewport[3];
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+    }
+    return gx_canvas_whole(x0, y0, x1 - x0, y1 - y0) ? 2 : 0;
+}
+
 /* Whether a guest physical address has n bytes of memory from it. */
 static int phys_ok(uint32_t a, uint32_t n) {
     return a + n <= 0x01800000u || (a >= 0x10000000u && a + n <= 0x14000000u);
@@ -1103,8 +1152,8 @@ static int texture_is_map(void) {
 
 /* Makes the batch one drawn with the current state, drawing the pending
  * one first if its state differs. */
-static void use_current_state(int mtx_per_vertex) {
-    int rebuilt = sStateDirty, screen;
+static void use_current_state(int mtx_per_vertex, const uint8_t* p, const VtxFormat* f, int count) {
+    int rebuilt = sStateDirty, screen, canvas;
     if (rebuilt) {
         build_state(&sState); /* may draw the pending batch, if a texture changes */
         sStateDirty = 0;
@@ -1116,9 +1165,11 @@ static void use_current_state(int mtx_per_vertex) {
         if (texture_is_map()) sMapDrawn = screen = 1;
         else if (origin_in_minimap(&sState)) screen = sMapDrawn;
     }
-    if (sState.mtx_per_vertex != mtx_per_vertex || sState.screen != screen) {
+    canvas = canvas_kind(&sState, p, f, count);
+    if (sState.mtx_per_vertex != mtx_per_vertex || sState.screen != screen || sState.canvas != canvas) {
         sState.mtx_per_vertex = mtx_per_vertex;
         sState.screen = screen;
+        sState.canvas = canvas;
         rebuilt = 1;
     }
     /* Everything but the XF fields, which build_state leaves zero. A
@@ -1482,7 +1533,7 @@ static void draw(int prim, const uint8_t* p, const VtxFormat* f, int count, int 
         sDrawCount++;
         return;
     }
-    use_current_state(f->pnmtx | (f->texmtx_mask ? 2 : 0));
+    use_current_state(f->pnmtx | (f->texmtx_mask ? 2 : 0), p, f, count);
     if ((sArena ? 0 : sBatchVerts) + count > sBatchCap) {
         sBatchCap = ((sArena ? 0 : sBatchVerts) + count) * 2;
         sBatch = (GXVertex*)realloc(sBatch, (size_t)sBatchCap * sizeof(GXVertex));
@@ -1633,6 +1684,11 @@ static void efb_copy(uint32_t exec) {
         }
         sDrawCount = sVertexCount = 0;
         sStateDirty = 1; /* textures are checked again each frame */
+        {
+            int mx, my;
+            gx_canvas(&mx, &my);
+            sCanvasOn = mx || my;
+        }
     } else {
         int fmt = (int)(((exec >> 4) & 7) | (((exec >> 3) & 1) << 3));
         gxb_copy_to_texture(dst, x, y, w, h, fmt, (exec >> 15) & 1, (bp[0x43] & 7) == 1, (int)(bp[0x4D] & 0x3FF) * 32);

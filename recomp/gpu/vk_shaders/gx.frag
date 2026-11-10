@@ -16,7 +16,7 @@
 
 layout(std140, set = 1, binding = 2) uniform Tev { uvec4 tu[(160 + 24 * 16) / 4]; };
 layout(set = 0, binding = 0) uniform sampler2D textures[16384];
-layout(push_constant) uniform Draw { uint xf, tev; uint tex[8]; } pc;
+layout(push_constant) uniform Draw { uint xf, tev; uint tex[8]; vec2 canvas; } pc;
 
 // TEX_IO, of the build: the texture coordinates gx.vert makes (as many as
 // the TEV stages read, in a specialized pipeline).

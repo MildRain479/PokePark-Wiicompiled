@@ -88,6 +88,12 @@ typedef struct GXDrawState {
     /* What the draw is of: 0 the game's picture, 1 the minimap, which a
      * second screen shows (gx_fifo.c). */
     int screen;
+    /* On a canvas with margins (gx_canvas, gx_device.h): 1 if the draw is
+     * 3D over the whole picture, shown over the margins too, more of the
+     * world; 2 if it is 2D covering the whole picture (a fade, a
+     * background, an effect's copy of the screen), stretched over it all;
+     * 0 otherwise (2D stays where it is in the picture, in the middle). */
+    int canvas;
     const uint32_t* xf;    /* GX_XF_WORDS words, laid out as above */
     int xf_dirty_lo, xf_dirty_hi; /* words changed since the last draw (lo >= hi: none) */
     /* What the batch draws, the same from frame to frame (its display
