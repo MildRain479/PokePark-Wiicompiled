@@ -14,7 +14,7 @@ copy at startup.
 
 ```
 python tools/recomp/recomp.py          # main.dol -> build/recomp/gen/*.c (~4 s)
-python tools/recomp/build.py --run     # compile (~25 s with MSVC) and run the tests
+python tools/recomp/build.py --run test # compile (~25 s with MSVC) and run the tests
 python tools/recomp/build.py --release # optimized across files (~70 s, a few % faster)
 ```
 

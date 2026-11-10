@@ -131,8 +131,12 @@ def build_msvc(common, targets, opt):
             todo = [s for s in srcs if stale(s, os.path.join(odir, os.path.splitext(os.path.basename(s))[0] + ".obj"))]
             if todo:
                 extra = "/TC" if lang == "c" else "/TP /EHsc /std:c++17"
-                f.write(f'cl {flags} {extra} /Fd"{odir}\\\\" /Fo"{odir}\\\\" /c ' +
-                        " ".join(f'"{s}"' for s in todo) + " || exit /b 1\n")
+                # The files go in a response file: a full rebuild's list is
+                # longer than a cmd line, which would lose the "|| exit".
+                rsp = os.path.join(odir, f"sources_{lang}.rsp")
+                with open(rsp, "w") as r:
+                    r.write("\n".join(f'"{s}"' for s in todo) + "\n")
+                f.write(f'cl {flags} {extra} /Fd"{odir}\\\\" /Fo"{odir}\\\\" /c @"{rsp}" || exit /b 1\n')
 
         compile_(common, objdir, "c")
         for name, srcs in targets.items():
