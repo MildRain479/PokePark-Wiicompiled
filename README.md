@@ -130,6 +130,8 @@ Optional changes to the game's balance, all off (100%) by default:
 - **Save photos anywhere.** Copying photos to the SD card (from
   Misdreavus's album) asks for a folder, and the photos are saved
   there as JPEGs.
+- **Skip movies.** Hold + for half a second to skip the opening or the
+  ending movie.
 - **Autosave.** With Options > Gameplay > Autosave on, the game saves
   itself, as the PokéPark Pad's Save does, whenever you make a friend
   or enter another area. It's off by default.

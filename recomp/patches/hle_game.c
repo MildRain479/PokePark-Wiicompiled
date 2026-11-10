@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "hle.h"
+#include "host_input.h"
 
 /* Scenes, as indexed by the scene table (0x80337FA8). */
 enum { SCENE_PARK, SCENE_ATTRACTION, SCENE_START_MENU, SCENE_LOBBY, SCENE_STRAP, SCENE_HOLD, SCENE_CHECK_DATA };
@@ -227,14 +228,17 @@ void hle_set_frame_rate(int fps) {
 
 /* Movies: the scripts open one (ThpManager syscall 0, with a loop flag),
  * then poll its state (syscall 5: 2 while playing, 3 once finished)
- * before closing it. RECOMP_SKIP_MOVIES=1 reports a movie that doesn't
- * loop as finished after about a second of playing, which skips the 56 s
- * opening for testing; the looping title background plays as usual.
+ * before closing it. Holding + for half a second reports a movie that
+ * doesn't loop as finished, which skips it (no sooner than about a second
+ * in); RECOMP_SKIP_MOVIES=1 does that by itself, which skips the 56 s
+ * opening for testing. The looping title background plays as usual.
  * (Reporting it finished at once closed the player while it was still
  * starting, and the game then waited forever.) */
 enum { THP_SYS_OPEN = 0, THP_SYS_STATE = 5, THP_PLAYING = 2, THP_FINISHED = 3 };
 #define SKIP_AFTER_POLLS 60
+#define SKIP_HOLD (PPC_TB_HZ / 2) /* + held this long skips a movie */
 static int sMovieLoops, sMoviePolls;
+static uint64_t sPlusSince; /* when + was pressed, 0 if it isn't held */
 
 /* int ThpManager::virt0x18(int sub, u32* args) */
 void f_801776E0(ppc_t* c) {
@@ -249,8 +253,15 @@ void f_801776E0(ppc_t* c) {
         sMoviePolls = 0;
     }
     f_801776E0_orig(c);
-    if (sub == THP_SYS_STATE && skip && !sMovieLoops && c->r[3] == THP_PLAYING && ++sMoviePolls > SKIP_AFTER_POLLS)
-        c->r[3] = THP_FINISHED;
+    if (sub == THP_SYS_STATE && !sMovieLoops && c->r[3] == THP_PLAYING) {
+        uint64_t now = ppc_timebase();
+        if (!(hle_wpad_held() & HOST_PAD_PLUS)) sPlusSince = 0;
+        else if (!sPlusSince) sPlusSince = now;
+        if (++sMoviePolls > SKIP_AFTER_POLLS && (skip || (sPlusSince && now - sPlusSince >= SKIP_HOLD))) {
+            if (!skip) HLE_LOG("movie skipped (+ held)");
+            c->r[3] = THP_FINISHED;
+        }
+    }
 }
 
 void hle_friends_story_data(uint32_t other); /* hle_friends.c */
