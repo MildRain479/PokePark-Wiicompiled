@@ -111,3 +111,5 @@
 0x802E4420 FAFclose  # hle_sd.c: fgetsize (the symbol's name is fclose's)
 0x802E4480 FAFseek  # hle_sd.c
 0x802E4540 pfstub_fwrite_thunk  # hle_sd.c: fwrite
+0x80127390 nsDelhi::nsGlobal::FriendNoteSaveDataOne::mark_as_friend  # hle_autosave.c: a friend made
+0x801827C0 nsDelhi::nsGlobal::GlobalManager::syscall0x15  # hle_autosave.c: the Pad's save while an autosave is under way

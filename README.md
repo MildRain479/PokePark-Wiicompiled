@@ -130,7 +130,10 @@ Optional changes to the game's balance, all off (100%) by default:
 - **Save photos anywhere.** Copying photos to the SD card (from
   Misdreavus's album) asks for a folder, and the photos are saved
   there as JPEGs.
-- **Unlock all passwords. One button on the Password screen gives that
+- **Autosave.** With Options > Gameplay > Autosave on, the game saves
+  itself, as the PokéPark Pad's Save does, whenever you make a friend
+  or enter another area. It's off by default.
+- **Unlock all passwords.** One button on the Password screen gives that
   save file what all seven passwords give, and the game saves it.
 - **Update check.** At start it asks GitHub whether a newer release is
   out. If one is, the save files screen says so, and Options > Display >

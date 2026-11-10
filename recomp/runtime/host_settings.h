@@ -56,6 +56,7 @@ typedef struct {
     int damage_dealt;        /* damage Pikachu deals in battles, percent of the game's */
     int damage_taken;        /* damage Pikachu takes in battles, percent of the game's */
     int chase_speed;         /* the speed of the Pokémon Pikachu chases, percent of the game's */
+    int autosave;            /* the game saved on making a friend or entering an area (hle_autosave.c) */
     float mouse_sensitivity; /* camera turn per pixel, times the default */
     int invert_tilt;         /* mouse up looks down */
     int check_updates;       /* ask GitHub for a newer release at start (update.c) */
@@ -86,7 +87,7 @@ void prompts_init(void);
 enum { SET_FULLSCREEN, SET_SCALE, SET_MSAA, SET_FRAME_RATE, SET_FOV, SET_SENSITIVITY, SET_INVERT, SET_ANISO,
        SET_RUMBLE, SET_TEXT_SPEED, SET_BERRIES, SET_PRICES,
        SET_DAMAGE_DEALT, SET_DAMAGE_TAKEN, SET_CHASE_SPEED, SET_RENDERER, SET_TOUCH, SET_UPDATES, SET_MINIMAP_TOP,
-       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT, SET_TEXTURE_PACK };
+       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT, SET_TEXTURE_PACK, SET_AUTOSAVE };
 /* Changes a setting a step (d: -1 or 1; on and off settings flip), applies
  * and saves it. */
 void settings_step(int which, int d);

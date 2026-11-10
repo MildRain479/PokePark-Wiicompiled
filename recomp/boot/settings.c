@@ -33,6 +33,7 @@ void hle_set_berry_rate(int percent);
 void hle_set_prices(int percent);
 void hle_set_damage(int dealt, int taken);
 void hle_set_chase_speed(int percent);
+void hle_set_autosave(int on); /* hle_autosave.c */
 
 /* The gameplay settings' choices, in order. */
 static const int kTextSpeeds[] = {1, 2, 3, 0};
@@ -55,6 +56,7 @@ static void apply_gameplay(void) {
     hle_set_prices(g_settings.prices);
     hle_set_damage(g_settings.damage_dealt, g_settings.damage_taken);
     hle_set_chase_speed(g_settings.chase_speed);
+    hle_set_autosave(g_settings.autosave);
 }
 
 #define FOV_MIN 80
@@ -228,8 +230,9 @@ void settings_save(void) {
             g_settings.damage_dealt);
     fprintf(f, "damage_taken = %d ; damage Pikachu takes in battles, percent of the game's: 0 (none), 50, 100, 200 or 300\n",
             g_settings.damage_taken);
-    fprintf(f, "chase_speed = %d ; the speed of the Pokemon Pikachu chases, percent of the game's: 50, 75, 100, 125 or 150\n\n",
+    fprintf(f, "chase_speed = %d ; the speed of the Pokemon Pikachu chases, percent of the game's: 50, 75, 100, 125 or 150\n",
             g_settings.chase_speed);
+    fprintf(f, "autosave = %d ; 1: save the game on making a friend or entering an area\n\n", g_settings.autosave);
     fprintf(f, "[updates]\n");
     fprintf(f, "check = %d ; 1: at start, ask GitHub whether a newer version is out\n\n", g_settings.check_updates);
 #ifndef __ANDROID__ /* no mouse or keyboard */
@@ -337,6 +340,7 @@ void settings_load(void) {
                 g_settings.damage_taken = kDamageTaken[choice(kDamageTaken, COUNT(kDamageTaken), atoi(p))];
             if (!strcmp(name, "chase_speed"))
                 g_settings.chase_speed = kChaseSpeeds[choice(kChaseSpeeds, COUNT(kChaseSpeeds), atoi(p))];
+            if (!strcmp(name, "autosave")) g_settings.autosave = atoi(p) != 0;
         } else if (!strcmp(section, "mouse")) {
             if (!strcmp(name, "sensitivity")) {
                 float s = (float)atof(p);
@@ -428,6 +432,10 @@ void settings_step(int which, int d) {
     case SET_RENDERER: g_settings.renderer = !g_settings.renderer; break;
     case SET_ASPECT: g_settings.aspect = (g_settings.aspect + d + ASPECTS) % ASPECTS; break;
     case SET_TEXTURE_PACK: g_settings.texture_pack = !g_settings.texture_pack; break;
+    case SET_AUTOSAVE:
+        g_settings.autosave = !g_settings.autosave;
+        apply_gameplay();
+        break;
     case SET_TOUCH: g_settings.touch_controls = !g_settings.touch_controls; break;
     case SET_MINIMAP_TOP: g_settings.minimap_top = !g_settings.minimap_top; break;
     case SET_DUAL_SCREEN: g_settings.dual_screen = !g_settings.dual_screen; break;

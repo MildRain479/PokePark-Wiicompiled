@@ -254,10 +254,12 @@ void f_801776E0(ppc_t* c) {
 }
 
 void hle_friends_story_data(uint32_t other); /* hle_friends.c */
+void hle_autosave_area(uint32_t other, uint32_t area, uint32_t zone); /* hle_autosave.c */
 
 /* void OtherDataSingleMode::set_target_zone_data(u8 area, u8 zone, u16
  * entrance): where the player goes next, told on loading a game too, so
- * where the story's other data is (the berries, for the second screen).
+ * where the story's other data is (the berries, for the second screen),
+ * and whether to autosave (another area or zone than the one there).
  * RECOMP_ZONE=<area>,<zone>[,<entrance>] sends them elsewhere instead, the
  * first time, for testing; RECOMP_FILM=<n> gives that many rolls of film
  * (its u16 at 0x2C: get_film_roll_amount), for taking photos. */
@@ -275,5 +277,6 @@ void f_80127820(ppc_t* c) {
         p = p ? strchr(p + 1, ',') : NULL;
         if (p) c->r[6] = (uint32_t)atoi(p + 1);
     }
+    hle_autosave_area(c->r[3], c->r[4], c->r[5]);
     f_80127820_orig(c);
 }

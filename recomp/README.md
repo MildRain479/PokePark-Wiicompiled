@@ -323,6 +323,7 @@ Diagnostics:
 | `hle_irq.c` | Interrupt delivery: device completions, the decrementer (`OSAlarm`), and a 59.94 Hz VI retrace. These are taken when the game enables interrupts, and the idle loop sleeps until the next one. |
 | `hle_ios.c` | IOS (`__ios_Ipc2`): devices answered on the host. There is no Bluetooth adapter. |
 | `hle_sd.c` | The SD card, answered above `/dev/sdio` at the SDK's FA file calls (PrFILE2's): a card kept in memory, always in the slot and empty at start. A photo the album copies to it is saved in a folder the player picks, asked once per copy (`host_sdcard.h`: the shell's folder picker in `sdcard_win32.c`, the system's in `sdcard_android.c`). |
+| `hle_autosave.c` | Autosave (Options > Gameplay): on making a friend (`FriendNoteSaveDataOne::mark_as_friend`) or entering another area (`set_target_zone_data`, through `hle_game.c`), the save the PokéPark Pad's Save starts (`GlobalManager::syscall0x15` 0xC8, then 0xC9 each frame until it's done), from the park's own frames. |
 | `hle_nand.c` | The NAND file system (`/dev/fs` and NAND file descriptors), stored in a host directory. It also provides what a US console's system menu leaves there: `SYSCONF` (English, stereo, Wii Remote settings) and `setting.txt` (region USA). `SCGetAspectRatio` reports a 16:9 TV unless `RECOMP_WIDESCREEN=0`. |
 | `hle_dvd.c` | The disc. `/dev/di` reads are mapped to the extracted files through the FST. |
 | `hle_exi.c` | EXI: no devices. |

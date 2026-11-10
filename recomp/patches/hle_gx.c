@@ -31,6 +31,7 @@ static void mark_minimap(uint32_t on) {
 }
 
 void hle_friends_update(ppc_t* c);
+void hle_autosave_update(ppc_t* c);
 
 /* void fn_801CDCE0(Scene*) */
 void f_801CDCE0(ppc_t* c) {
@@ -40,5 +41,6 @@ void f_801CDCE0(ppc_t* c) {
     if (minimap) {
         mark_minimap(0);
         hle_friends_update(c); /* hle_friends.c: on the game's thread, in the park */
+        hle_autosave_update(c); /* hle_autosave.c */
     }
 }

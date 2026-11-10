@@ -92,6 +92,7 @@ static const Row kGameplay[] = {
     {ROW_SETTING, SET_DAMAGE_DEALT, "Damage dealt"},
     {ROW_SETTING, SET_DAMAGE_TAKEN, "Damage taken"},
     {ROW_SETTING, SET_CHASE_SPEED, "Chase speed"},
+    {ROW_SETTING, SET_AUTOSAVE, "Autosave"},
 };
 static const Row kDual[] = {
     {ROW_SETTING, SET_DUAL_SCREEN, "Dual screen"},
@@ -170,6 +171,7 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_INVERT: snprintf(out, n, g_settings.invert_tilt ? "On" : "Off"); break;
     case SET_TOUCH: snprintf(out, n, g_settings.touch_controls ? "On" : "Off"); break;
     case SET_MINIMAP_TOP: snprintf(out, n, g_settings.minimap_top ? "On" : "Off"); break;
+    case SET_AUTOSAVE: snprintf(out, n, g_settings.autosave ? "On" : "Off"); break;
     case SET_DUAL_SCREEN: snprintf(out, n, g_settings.dual_screen ? "On" : "Off"); break;
     case SET_SWAP_SCREENS: snprintf(out, n, g_settings.swap_screens ? "On" : "Off"); break;
     case SET_FRIENDS_LIST: snprintf(out, n, g_settings.friends_list ? "On" : "Off"); break;
