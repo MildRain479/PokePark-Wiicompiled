@@ -22,6 +22,7 @@ void hle_dump_threads(void);
 void input_init(void);
 void audio_init(void);
 void font_init(void);
+void sdcard_init(void);
 void settings_load(void);
 void update_check(void); /* update.c */
 void hle_game_init(void);
@@ -676,6 +677,7 @@ int main(int argc, char** argv) {
     input_init();
     audio_init();
     font_init();
+    sdcard_init();
     c = gCpu = (ppc_t*)calloc(1, sizeof(ppc_t));
     c->msr = 0x00002032; /* FP available, instruction and data translation on */
     printf("boot: entering __start at %08X\n", entry);

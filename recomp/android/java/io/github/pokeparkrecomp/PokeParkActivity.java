@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.provider.DocumentsContract;
 import android.util.Log;
 import android.view.Display;
 import android.view.InputDevice;
@@ -36,12 +37,17 @@ import java.net.URL;
  * second screen (the AYN Thor's lower one, or a touch screen plugged in, as
  * Retroid's Dual Screen Add-On), a window there whose surface and touches
  * go to the native side (second_screen_android.c), shown and hidden as its
- * settings say.
+ * settings say. And for the photos the game copies to its SD card
+ * (sdcard_android.c): asking for a folder for them, and making each one
+ * there.
  */
 public class PokeParkActivity extends NativeActivity {
     private static final int PICK = 1;
+    private static final int PICK_FOLDER = 2;
     private static final String DISC = "disc";
+    private static final String PHOTOS = "photos";
     private volatile int pickedFd = -1;
+    private volatile int pickedFolder = -1;
     private String asking;
 
     private SharedPreferences prefs() {
@@ -290,8 +296,60 @@ public class PokeParkActivity extends NativeActivity {
             .show();
     }
 
+    /** Asks for a folder for the photos copied to the SD card, starting at
+     * the one chosen last (from native code; takePhotoFolder answers). */
+    public void choosePhotoFolder() {
+        pickedFolder = -1;
+        runOnUiThread(() -> {
+            Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            String last = prefs().getString(PHOTOS, null);
+            if (last != null) pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(last));
+            try {
+                startActivityForResult(pick, PICK_FOLDER);
+            } catch (Exception e) {
+                Log.w("PokePark", "no folder picker", e);
+                pickedFolder = 0;
+            }
+        });
+    }
+
+    /** -1 while asking, then 1 if a folder was chosen or 0 if not (polled
+     * from native code). */
+    public int takePhotoFolder() {
+        return pickedFolder;
+    }
+
+    /** A new file named name in the photos' folder, open for writing, or
+     * -1 (from native code). A name that's taken gets a number added. */
+    public int createPhoto(String name) {
+        try {
+            Uri tree = Uri.parse(prefs().getString(PHOTOS, ""));
+            Uri dir = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+            Uri doc = DocumentsContract.createDocument(getContentResolver(), dir, "image/jpeg", name);
+            ParcelFileDescriptor pfd = doc == null ? null : getContentResolver().openFileDescriptor(doc, "w");
+            return pfd == null ? -1 : pfd.detachFd();
+        } catch (Exception e) {
+            Log.w("PokePark", "can't save " + name, e);
+            return -1;
+        }
+    }
+
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
+        if (request == PICK_FOLDER) {
+            Uri uri = result == RESULT_OK && data != null ? data.getData() : null;
+            if (uri != null) {
+                try {
+                    getContentResolver().takePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (Exception e) {
+                    Log.w("PokePark", "no lasting permission for " + uri, e);
+                }
+                prefs().edit().putString(PHOTOS, uri.toString()).apply();
+            }
+            pickedFolder = uri != null ? 1 : 0;
+            return;
+        }
         if (request != PICK) {
             super.onActivityResult(request, result, data);
             return;

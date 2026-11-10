@@ -79,6 +79,10 @@ Thor so far.
   ultrawide, which show more of the park above and below or at the
   sides. The HUD and menus stay at 16:9 in the middle.
 - **Field of view.** 80% to 150% of the game's, in the park.
+- **Texture packs.** Packs made for Dolphin work as they are: put the
+  pack's folder in a `textures` folder beside the game (on Android, the
+  `textures` folder beside `R8AE01`). Options > Display > Texture pack
+  turns it off and on.
 - **Vulkan and OpenGL renderers.** Vulkan is the default and the
   fastest. It falls back to OpenGL if Vulkan can't start.
 - **Fullscreen** (borderless) or windowed, toggled with Alt+Enter.
@@ -123,7 +127,10 @@ Optional changes to the game's balance, all off (100%) by default:
 - **An in-game Options menu.** It's in the PokéPark Pad (pause menu) and
   on the save files screen, in the game's own style. Changes apply
   immediately and are saved in `settings.ini`.
-- **Unlock all passwords.** One button on the Password screen gives that
+- **Save photos anywhere.** Copying photos to the SD card (from
+  Misdreavus's album) asks for a folder, and the photos are saved
+  there as JPEGs.
+- **Unlock all passwords. One button on the Password screen gives that
   save file what all seven passwords give, and the game saves it.
 - **Update check.** At start it asks GitHub whether a newer release is
   out. If one is, the save files screen says so, and Options > Display >

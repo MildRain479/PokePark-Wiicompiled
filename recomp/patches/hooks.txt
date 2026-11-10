@@ -89,3 +89,25 @@
 0x8001D5B0 nsDelhi::nsCamera::CameraFirstPerson::virt0x18  # hle_camera.c: turned by the right stick and mouse
 0x801CDCE0 fn_801CDCE0  # hle_gx.c: the minimap marked for the second screen
 0x80127820 nsDelhi::nsGlobal::OtherDataSingleMode::set_target_zone_data  # hle_game.c: starting in a zone for testing
+0x802E4580 FAInit  # hle_sd.c: the SD card, kept in memory: no driver started
+0x802E4050 FAAttach  # hle_sd.c: a card always in the slot
+0x802E4300 FADetach  # hle_sd.c
+0x802E46C0 fn_802E46C0  # hle_sd.c: mount
+0x802E42B0 fn_802E42B0  # hle_sd.c: the media check after a failed mount
+0x802E4650 FAIsWriteProtected  # hle_sd.c
+0x802E48A0 FAUnmount  # hle_sd.c
+0x802E4550 fn_802E4550  # hle_sd.c: devinf (free space)
+0x802E43B0 FAErrnum  # hle_sd.c
+0x802E46F0 fn_802E46F0  # hle_sd.c: opendir
+0x802E4250 fn_802E4250  # hle_sd.c: closedir
+0x802E4690 FAMkdir  # hle_sd.c
+0x802E4870 FARemove  # hle_sd.c
+0x802E4510 FAFstat  # hle_sd.c
+0x802E44B0 FAFsfirst  # hle_sd.c
+0x802E44E0 FAFsnext  # hle_sd.c
+0x802E4450 FAFopen  # hle_sd.c
+0x802E4280 FACreate  # hle_sd.c
+0x802E43F0 fn_802E43F0  # hle_sd.c: fclose: a photo written is saved where the player chooses
+0x802E4420 FAFclose  # hle_sd.c: fgetsize (the symbol's name is fclose's)
+0x802E4480 FAFseek  # hle_sd.c
+0x802E4540 pfstub_fwrite_thunk  # hle_sd.c: fwrite

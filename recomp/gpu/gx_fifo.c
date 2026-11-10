@@ -728,6 +728,22 @@ static uint32_t texture_for_map(int map) {
         h = image;
     }
     if (fmt >= 8 && fmt <= 10) h ^= hash_bytes(&tmem[((tlut & 0x3FF) << 9) & 0xFFFFF], fmt == 8 ? 32 : 512);
+    if ((e->key != key || e->hash != h || !e->handle) && texpack_on()) {
+        /* A texture pack's picture in its place. */
+        static const int kPalette[3] = {16 * 2, 256 * 2, 16384 * 2};
+        int indexed = fmt >= 8 && fmt <= 10, rw, rh, rl;
+        uint8_t* px = texpack_find(MA(addr), gx_texture_size(fmt, width, height), fmt, width, height, ((mode0 >> 5) & 3) != 0,
+                                   indexed ? &tmem[((tlut & 0x3FF) << 9) & 0xFFFFF] : NULL, indexed ? kPalette[fmt - 8] : 0,
+                                   levels, &rw, &rh, &rl);
+        if (px) {
+            if (e->handle) gxb_texture_free(e->handle);
+            e->handle = gxb_texture(key, GX_PIX_RGBA8, rw, rh, rl, px, mode0);
+            free(px);
+            e->pix = -1; /* not updated in place: made again if its memory changes */
+            e->key = key;
+            e->hash = h;
+        }
+    }
     if (e->key != key || e->hash != h || !e->handle) {
         uint8_t* rgba = (uint8_t*)malloc((size_t)width * height * 8); /* the levels below take a third more */
         /* RECOMP_GX_DUMP_TEX=<address>: save that texture, as decoded, to
@@ -1671,7 +1687,7 @@ static void efb_copy(uint32_t exec) {
         sFrame++;
         note_writes((uint32_t)sFrame);
         {
-            /* The filtering setting changed: every texture made again. */
+            /* The filtering or texture pack setting changed: every texture made again. */
             static int generation;
             int t;
             if (gxb_texture_generation() != generation) {

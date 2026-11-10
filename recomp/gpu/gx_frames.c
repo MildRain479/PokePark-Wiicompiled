@@ -159,7 +159,7 @@ static void show(int x, int y, int w, int h) {
 /* ------------------------------------------------------------------------ */
 /* Textures */
 
-int gxb_texture_generation(void) { return g_settings.aniso; }
+int gxb_texture_generation(void) { return g_settings.aniso | g_settings.texture_pack << 8; }
 
 /* Textures are deleted after the frame is presented: a draw earlier in the
  * frame may still refer to one, and a device may hand a deleted handle

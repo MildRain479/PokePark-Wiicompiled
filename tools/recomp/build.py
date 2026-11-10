@@ -54,7 +54,7 @@ TARGETS = {
     "boot": sorted(s for s in glob.glob(os.path.join(ROOT, "recomp", "boot", "*.c")) +
                    glob.glob(os.path.join(ROOT, "recomp", "gpu", "*.c")) if not s.endswith("_android.c")),
 }
-LIBS = {"boot": ["opengl32.lib", "user32.lib", "gdi32.lib", "ole32.lib", "windowscodecs.lib"]}
+LIBS = {"boot": ["opengl32.lib", "user32.lib", "gdi32.lib", "ole32.lib", "windowscodecs.lib", "shell32.lib", "uuid.lib"]}
 DEFINES = ["RECOMP_TRACE", "RECOMP_DEBUG_MENU"]
 VULKAN = None  # the Vulkan SDK's folder, if there is one (vulkan_sdk)
 

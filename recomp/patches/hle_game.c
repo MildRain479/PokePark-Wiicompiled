@@ -259,11 +259,14 @@ void hle_friends_story_data(uint32_t other); /* hle_friends.c */
  * entrance): where the player goes next, told on loading a game too, so
  * where the story's other data is (the berries, for the second screen).
  * RECOMP_ZONE=<area>,<zone>[,<entrance>] sends them elsewhere instead, the
- * first time, for testing. */
+ * first time, for testing; RECOMP_FILM=<n> gives that many rolls of film
+ * (its u16 at 0x2C: get_film_roll_amount), for taking photos. */
 void f_80127820(ppc_t* c) {
     static int done;
     const char* e = getenv("RECOMP_ZONE");
+    const char* film = getenv("RECOMP_FILM");
     hle_friends_story_data(c->r[3]);
+    if (film && *film) ST16(c->r[3] + 0x2C, (uint16_t)atoi(film));
     if (!done && e && *e) {
         const char* p = strchr(e, ',');
         done = 1;

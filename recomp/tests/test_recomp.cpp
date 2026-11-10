@@ -13,6 +13,9 @@
 #include <string>
 
 #include "recomp_funcs.h"
+extern "C" {
+#include "host_sdcard.h"
+}
 
 // The decompiled source, built for the host.
 #include "flib/CodepointConvert.h"
@@ -321,6 +324,71 @@ static void test_math() {
     printf("pow/atan2/fmod: worst difference from host libm %.0f ulp over 300K inputs\n", worst);
 }
 
+// The SD card (hle_sd.c), through FA's calls as the game's SD manager
+// makes them to copy a photo: mount, the free space, the scan for the
+// next number, the folder made, the file opened "r+" (missing), made,
+// closed and opened again, written and closed; then the scan again.
+static std::string gSaved;
+static int sd_choose() { return 1; }
+static int sd_save(const char* name, const uint8_t* data, uint32_t size) {
+    gSaved = std::string(name) + ":" + std::string((const char*)data, size);
+    return 1;
+}
+
+static int32_t fa(uint32_t addr, uint32_t a = 0, uint32_t b = 0, uint32_t c = 0, uint32_t d = 0) {
+    gCpu.r[3] = a;
+    gCpu.r[4] = b;
+    gCpu.r[5] = c;
+    gCpu.r[6] = d;
+    call(addr);
+    return (int32_t)gCpu.r[3];
+}
+
+static void test_sd() {
+    enum : uint32_t {
+        kAttach = 0x802E4050, kMount = 0x802E46C0, kDevinf = 0x802E4550, kErrnum = 0x802E43B0,
+        kOpendir = 0x802E46F0, kMkdir = 0x802E4690, kFopen = 0x802E4450, kCreate = 0x802E4280,
+        kFclose = 0x802E43F0, kFsize = 0x802E4420, kFseek = 0x802E4480, kFwrite = 0x802E4540,
+        kFsfirst = 0x802E44B0, kFsnext = 0x802E44E0, kFstat = 0x802E4510
+    };
+    const uint32_t path = kBuf, mode = kBuf + 0x100, info = kBuf + 0x200, data = kBuf + 0x300, ent = kBuf2;
+    g_host_sd_choose = sd_choose;
+    g_host_sd_save = sd_save;
+    memset(MA(info), 0, 0x40);
+    fa(kAttach, 0, 0, 0, info);
+    check(*(uint8_t*)MA(info + 8) == 'A' && (*(uint8_t*)MA(info + 9) & 0x10), "SD", "no card in drive A");
+    check(fa(kMount, 'A') == 0, "SD", "mount");
+    fa(kDevinf, 'A', info);
+    check((int32_t)(LD32(info + 4) * LD32(info + 8) * LD32(info + 12)) > 100 * 1024 * 1024, "SD", "free space");
+    put_str(path, "\\DCIM\\???NIN01\\R8A_????.JPG");
+    check(fa(kFsfirst, path, 0x60, ent) != 0 && fa(kErrnum) == 2, "SD", "an empty card's scan");
+    put_str(path, "\\DCIM\\100NIN01");
+    check(fa(kOpendir, path) == 0, "SD", "a folder not made yet");
+    put_str(path, "\\DCIM");
+    check(fa(kMkdir, path) == 0, "SD", "mkdir DCIM");
+    put_str(path, "\\DCIM\\100NIN01");
+    check(fa(kMkdir, path) == 0 && fa(kOpendir, path) != 0, "SD", "mkdir 100NIN01");
+    put_str(path, "\\DCIM\\100NIN01\\R8A_0001.JPG");
+    put_str(mode, "r+");
+    check(fa(kFopen, path, mode) == 0, "SD", "r+ of a missing file");
+    int32_t h = fa(kCreate, path, 0);
+    check(h != 0 && fa(kFclose, (uint32_t)h) == 0, "SD", "create");
+    h = fa(kFopen, path, mode);
+    check(h != 0 && fa(kFsize, (uint32_t)h, info) == 0 && LD32(info) == 0, "SD", "reopened, empty");
+    put_str(data, "JPEGDATA");
+    check(fa(kFseek, (uint32_t)h, 0, 0) == 0 && fa(kFwrite, data, 1, 8, (uint32_t)h) == 8, "SD", "write");
+    check(fa(kFclose, (uint32_t)h) == 0 && gSaved == "R8A_0001.JPG:JPEGDATA", "SD", "saved \"%s\"", gSaved.c_str());
+    put_str(path, "\\DCIM\\???NIN01");
+    check(fa(kFsfirst, path, 0x10, ent) == 0 && !strcmp((char*)MA(ent + 0x22D), "100NIN01"), "SD", "folder scan");
+    put_str(path, "\\DCIM\\100NIN01\\R8A_????.JPG");
+    check(fa(kFsfirst, path, 0x60, ent) == 0 && !strcmp((char*)MA(ent + 0x22D), "R8A_0001.JPG") &&
+              fa(kFsnext, ent) != 0 && fa(kErrnum) == 2,
+          "SD", "file scan");
+    put_str(path, "\\DCIM\\100NIN01\\R8A_0001.JPG");
+    check(fa(kFstat, path, info) == 0 && LD32(info) == 8 && *(uint8_t*)MA(info + 0x10) == 0x20, "SD", "stat");
+    printf("SD card: a photo copied as the game's SD manager does it\n");
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s <main.dol>\n", argv[0]);
@@ -344,6 +412,7 @@ int main(int argc, char** argv) {
     test_disc();
     test_hook();
     test_math();
+    test_sd();
 
     printf("%d checks, %d failures\n", gChecks, gFailures);
     return gFailures ? 1 : 0;

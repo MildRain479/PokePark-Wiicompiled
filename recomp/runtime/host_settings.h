@@ -41,6 +41,7 @@ typedef struct {
     int aniso;               /* anisotropic filtering: 1 (off), 2, 4, 8 or 16 */
     int renderer;            /* RENDERER_*: what draws, from the next start */
     int aspect;              /* ASPECT_*: the picture's shape */
+    int texture_pack;        /* Dolphin texture packs in the textures folder used (texpack.c) */
     int rumble;              /* controller rumble: 0 off, 1 light, 2 normal, 3 strong */
     int touch_controls;      /* Android: the touch screen's controls, shown while it was used last; 0 never */
     /* Android, on a handheld with two screens (second_screen_device):
@@ -85,7 +86,7 @@ void prompts_init(void);
 enum { SET_FULLSCREEN, SET_SCALE, SET_MSAA, SET_FRAME_RATE, SET_FOV, SET_SENSITIVITY, SET_INVERT, SET_ANISO,
        SET_RUMBLE, SET_TEXT_SPEED, SET_BERRIES, SET_PRICES,
        SET_DAMAGE_DEALT, SET_DAMAGE_TAKEN, SET_CHASE_SPEED, SET_RENDERER, SET_TOUCH, SET_UPDATES, SET_MINIMAP_TOP,
-       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT };
+       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT, SET_TEXTURE_PACK };
 /* Changes a setting a step (d: -1 or 1; on and off settings flip), applies
  * and saves it. */
 void settings_step(int which, int d);

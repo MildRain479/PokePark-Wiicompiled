@@ -40,6 +40,7 @@ int display_scale(void); /* gx_frames.c: as applied */
 int display_msaa(void);
 int display_renderer(void); /* RENDERER_*: the one drawing */
 int hle_widescreen(void);    /* the game in its 16:9 mode: from the start */
+int texpack_count(void);     /* texpack.c: the pictures in the textures folder */
 int gxb_display_hz(void);
 
 /* ------------------------------------------------------------------------ */
@@ -77,6 +78,7 @@ static const Row kDisplay[] = {
     {ROW_SETTING, SET_ASPECT, "Aspect ratio"},
     {ROW_SETTING, SET_MSAA, "Anti-aliasing"},     {ROW_SETTING, SET_FRAME_RATE, "Frame rate"},
     {ROW_SETTING, SET_FOV, "Field of view"},       {ROW_SETTING, SET_ANISO, "Filtering"},
+    {ROW_SETTING, SET_TEXTURE_PACK, "Texture pack"},
 #ifndef __ANDROID__
     {ROW_SETTING, SET_RENDERER, "Renderer"},
 #endif
@@ -172,6 +174,10 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_SWAP_SCREENS: snprintf(out, n, g_settings.swap_screens ? "On" : "Off"); break;
     case SET_FRIENDS_LIST: snprintf(out, n, g_settings.friends_list ? "On" : "Off"); break;
     case SET_ANISO: snprintf(out, n, g_settings.aniso == 1 ? "Original" : "%dx", g_settings.aniso); break;
+    case SET_TEXTURE_PACK:
+        if (!texpack_count()) snprintf(out, n, "None found");
+        else snprintf(out, n, g_settings.texture_pack ? "On (%d)" : "Off", texpack_count());
+        break;
     case SET_ASPECT: {
         static const char* const kShape[ASPECTS] = {"4:3", "16:9", "16:10", "21:9"};
         snprintf(out, n, "%s%s", kShape[g_settings.aspect],

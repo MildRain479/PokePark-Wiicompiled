@@ -119,8 +119,8 @@ uint32_t gxb_texture(uint64_t key, int pix, int width, int height, int levels, c
 void gxb_texture_update(uint32_t handle, int pix, int width, int height, int levels, const uint8_t* pixels);
 /* The layouts textures may have besides RGBA8, a bit (1 << pix) each. */
 unsigned gxb_texture_pixels(void);
-/* Changes when textures should be made again (the filtering setting
- * changed). */
+/* Changes when textures should be made again (the filtering or
+ * texture pack setting changed). */
 int gxb_texture_generation(void);
 void gxb_texture_free(uint32_t handle);
 /* Draws triangles: count indices from index + first_index, three to a
@@ -150,6 +150,17 @@ void gxb_clear(int color, int alpha, int depth, uint32_t rgba, uint32_t z);
 void gxb_copy_to_texture(uint32_t addr, int x, int y, int w, int h, int fmt, int intensity, int efb_alpha, int stride);
 /* Shows the EFB rectangle the game copied to the XFB. */
 void gxb_present(int x, int y, int w, int h);
+
+/* Texture packs (texpack.c): whether one is on and has pictures, how
+ * many it has, and a texture's replacement, if it has one: fmt, width x
+ * height, its first level's size bytes at data, mipmaps if it has a
+ * mipmap filter, and a colour-indexed one's palette (tlut_size bytes:
+ * all its entries); RGBA8 levels (malloc'd), as many as levels at most,
+ * the first out_w x out_h. */
+int texpack_on(void);
+int texpack_count(void);
+uint8_t* texpack_find(const uint8_t* data, int size, int fmt, int width, int height, int mipmaps, const uint8_t* tlut,
+                      int tlut_size, int levels, int* out_w, int* out_h, int* out_levels);
 
 /* Texture decoding (gx_texture.c). Output is RGBA8, row-major. */
 int gx_texture_size(int fmt, int width, int height);

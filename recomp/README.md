@@ -130,7 +130,16 @@ whole picture otherwise (2D, or the 2D screens' 3D, which sees only to
 stays where it is, in the middle, and the menus show at 16:9 with bars.
 EFB copies and the presented picture of the whole picture take in the
 margins; a copy written back to memory (the game's photos) is the
-picture's part of it. THP movie frames are
+picture's part of it.
+
+Texture packs (`recomp/boot/texpack.c`) are Dolphin's: PNGs named
+`tex1_<w>x<h>[_m]_<hash>[_<palette hash>]_<format>`, found anywhere
+under the `textures` folder. A texture made for the first time (or
+changed) is hashed as Dolphin does (XXH64 of its first level, and of a
+colour-indexed one's palette entries in use) and, if the pack has its
+picture, that picture is used instead, with its mipmaps made from it.
+Pictures are read when first needed (WIC on Windows, `AImageDecoder` on
+Android) and kept in a 256 MB cache. THP movie frames are
 decoded natively (`hle_thp.c`). EFB copies are converted to their copy
 format, and the EFB depth is stored reversed in a float buffer, for the
 precision GX scenes need near the far plane. 3D lighting is implemented
@@ -256,6 +265,12 @@ Diagnostics:
   display.
 - `RECOMP_WIDESCREEN=0` sets the console up for a 4:3 TV instead of
   16:9 (`1` for 16:9), over the Aspect ratio setting.
+- `RECOMP_TEXTURES=<dir>` reads texture packs from there instead of the
+  `textures` folder; `RECOMP_TEXTURES_LOG=1` prints each texture's
+  Dolphin name as it's looked for.
+- `RECOMP_SD_DIR=<dir>` saves photos copied to the SD card there,
+  without asking for a folder.
+- `RECOMP_FILM=<n>` gives that many rolls of film on loading a game.
 - `RECOMP_PAD_SCRIPT="<seconds>:<buttons> ..."` presses buttons at set
   times, for unattended runs: `"10:2 10.3: 22:right 22.3:"` presses 2 at
   10 s and right at 22 s. Buttons: up down left right a b 1 2 plus minus
@@ -306,7 +321,8 @@ Diagnostics:
 |---|---|
 | `hle_thread.c` | Thread switching. Each guest thread is a host fiber. `OSSaveContext` and `OSLoadContext` become fiber switches. Interrupts run on the interrupted thread and return to it. |
 | `hle_irq.c` | Interrupt delivery: device completions, the decrementer (`OSAlarm`), and a 59.94 Hz VI retrace. These are taken when the game enables interrupts, and the idle loop sleeps until the next one. |
-| `hle_ios.c` | IOS (`__ios_Ipc2`): devices answered on the host. There is no SD card and no Bluetooth adapter. |
+| `hle_ios.c` | IOS (`__ios_Ipc2`): devices answered on the host. There is no Bluetooth adapter. |
+| `hle_sd.c` | The SD card, answered above `/dev/sdio` at the SDK's FA file calls (PrFILE2's): a card kept in memory, always in the slot and empty at start. A photo the album copies to it is saved in a folder the player picks, asked once per copy (`host_sdcard.h`: the shell's folder picker in `sdcard_win32.c`, the system's in `sdcard_android.c`). |
 | `hle_nand.c` | The NAND file system (`/dev/fs` and NAND file descriptors), stored in a host directory. It also provides what a US console's system menu leaves there: `SYSCONF` (English, stereo, Wii Remote settings) and `setting.txt` (region USA). `SCGetAspectRatio` reports a 16:9 TV unless `RECOMP_WIDESCREEN=0`. |
 | `hle_dvd.c` | The disc. `/dev/di` reads are mapped to the extracted files through the FST. |
 | `hle_exi.c` | EXI: no devices. |
