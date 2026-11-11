@@ -12,7 +12,12 @@
  * zone than the one there (hle_game.c tells us; loading a game sends the
  * one saved). The save waits for the park's own frames (the minimap's
  * drawing, hle_gx.c), so for the end of a scene, a menu or a battle, and
- * for any save already under way. */
+ * for any save already under way. It also waits until no event script has
+ * run for half a second: a story scene in the park still draws the
+ * minimap, and a friend made in one (Chikorita's, on the first path) comes
+ * before the scene's end is written down, so a save then would play the
+ * scene again on loading. The EventScriptInterface's scripts in use are
+ * the pool's less its free list, as EventManager::RunBegin counts them. */
 #include "hle.h"
 
 #define SAVE_START 0xC8u
@@ -21,10 +26,26 @@
 #define GM_STATE 0x5FE8u /* 3: a save under way */
 #define SAVING 3u
 #define SLOTS 4u /* GD0 to GD3 */
+#define SCRIPTS 0x8048645Cu /* EventScriptInterface::_instance */
+#define SCRIPT_POOL 0x16Cu  /* the free list's links */
+#define SCRIPT_COUNT 0x170u /* the pool's size */
+#define SCRIPT_FREE 0x174u  /* the first free one, -1 for none */
+#define QUIET_FRAMES 30     /* park frames with no script running */
 
 static int sOn;      /* the setting */
 static int sWanted;  /* something to save */
 static int sOurs;    /* a save of ours under way */
+static int sQuiet;   /* park frames since a script last ran */
+
+/* Whether an event script (a story scene, a talk) is running. */
+static int script_running(void) {
+    uint32_t esi = LD32(SCRIPTS), count, free = 0, i;
+    if (!esi) return 0;
+    count = LD32(esi + SCRIPT_COUNT);
+    for (i = LD32(esi + SCRIPT_FREE); i != 0xFFFFFFFFu && free <= count; free++)
+        i = LD32(LD32(esi + SCRIPT_POOL) + i * 4);
+    return free != count;
+}
 
 void hle_set_autosave(int on) { sOn = on; }
 
@@ -73,6 +94,7 @@ void f_801827C0(ppc_t* c) {
 void hle_autosave_update(ppc_t* c) {
     uint32_t lr = c->lr, r3 = c->r[3], gm;
     if (!sOurs && !sWanted) return;
+    if (!sOurs && (script_running() ? (sQuiet = 0, 1) : ++sQuiet < QUIET_FRAMES)) return;
     f_8002E840(c);
     gm = c->r[3];
     if (sOurs) {
@@ -82,6 +104,7 @@ void hle_autosave_update(ppc_t* c) {
         }
     } else if (LD32(gm + GM_STATE) == 0 && LD32(gm + GM_SLOT) < SLOTS) {
         sWanted = 0;
+        sQuiet = 0;
         global_call(c, gm, SAVE_START);
         sOurs = LD32(gm + GM_STATE) == SAVING;
         HLE_LOG("autosave: saving to slot %u", LD32(gm + GM_SLOT));
