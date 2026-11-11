@@ -22,6 +22,7 @@
 #include "host_sdcard.h"
 
 extern struct android_app* g_android_app; /* window_android.c */
+void win_pump(void);                       /* window_android.c */
 
 static const char* sDir; /* RECOMP_SD_DIR */
 
@@ -87,7 +88,14 @@ static int choose(void) {
     }
     sDir = NULL;
     if (call("choosePhotoFolder", "()V", NULL) < 0) return 0;
-    while ((r = call("takePhotoFolder", "()I", NULL)) < 0) nanosleep(&tick, NULL);
+    /* The picker covers the game, so its window goes, and the activity
+     * waits for the game to let go of it (win_pump, at a frame's end):
+     * let go here too, or neither the activity nor the picker's answer
+     * gets any further. */
+    while ((r = call("takePhotoFolder", "()I", NULL)) < 0) {
+        win_pump();
+        nanosleep(&tick, NULL);
+    }
     return r == 1;
 }
 
