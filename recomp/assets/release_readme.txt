@@ -12,6 +12,12 @@ Getting started
   program; your saves are kept in R8AE01\nand.
 - Keep the prompts and tools folders beside PokePark.exe.
 
+Steam Deck
+- Not tested yet, but it should run through Proton: in Desktop Mode, add
+  PokePark.exe to Steam as a non-Steam game, and in its Properties >
+  Compatibility, force the latest Proton. Then set Options > Display >
+  Aspect ratio to 16:10 and turn on Fullscreen.
+
 Settings
 - Options are in the pause menu (and on the save files screen):
   display, keyboard, controller and gameplay. They are saved in

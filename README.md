@@ -59,6 +59,27 @@ the same way, but hasn't been tested.
 handheld with Vulkan 1.3. Tested on a phone (Adreno 830 GPU) and the AYN
 Thor so far.
 
+## Playing on Steam Deck
+
+There's no Linux version, but the Windows one should run through Proton,
+the Deck's built-in Windows compatibility layer. This hasn't been tested
+yet, so please report how it goes.
+
+1. In Desktop Mode, download the Windows build from
+   [Releases](../../releases) and unzip it somewhere on the Deck, along
+   with your disc image.
+2. In Steam, choose **Games > Add a Non-Steam Game to My Library** and
+   pick `PokePark.exe`.
+3. In that entry's **Properties > Compatibility**, tick **Force the use of
+   a specific Steam Play compatibility tool** and choose the latest
+   Proton.
+4. Start it. The first time, choose your disc image, as on Windows.
+5. In Options > Display, set **Aspect ratio** to **16:10** (the Deck's
+   screen) and turn on **Fullscreen**.
+
+The Deck's controls work as an Xbox controller. If something doesn't
+work, open an issue saying so, with your Proton version.
+
 ## Improvements over the Wii version
 
 ### Graphics
