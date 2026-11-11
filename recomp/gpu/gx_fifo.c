@@ -1097,11 +1097,15 @@ int gx_canvas_whole(float x, float y, float w, float h); /* gx_frames.c */
  * picture is a screen effect drawn in front of it (the dash's blur, a
  * copy of the picture on a quad just past the near plane), so it's 2:
  * held where it was, it covered only the 16:9 middle. */
+static uint32_t sStretchTex = 0xFFFFFFFFu;
+static uint64_t sStretchUntil;
+
 static int canvas_kind(const GXDrawState* st, const uint8_t* p, const VtxFormat* f, int count) {
     static GXVertex v[64];
     GXVertex tpl;
     float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
     int i, persp = !xf[0x1026], world;
+    uint32_t tex;
     if (!sCanvasOn || !gx_canvas_whole(st->viewport[0], st->viewport[1], st->viewport[2], st->viewport[3])) return 0;
     /* The park's cameras see to 9999; the 2D screens' 3D (the menus'
      * boards, close-ups) only to 1000, and stays in the picture, as the
@@ -1137,6 +1141,16 @@ static int canvas_kind(const GXDrawState* st, const uint8_t* p, const VtxFormat*
         if (y > y1) y1 = y;
     }
     if (world) return gx_canvas_whole(x0, y0, x1 - x0, y1 - y0) && z1 - z0 <= -z1 * 0.001f ? 2 : 1;
+    /* A 2D piece reaching well past the picture's side is the screen's
+     * own effect, cut by its edge (the dash's streaks), so it's stretched
+     * over the canvas, as is the rest of what's drawn with its texture
+     * (the streaks nearer the middle) while it's about. */
+    tex = bp[0x94] & 0xFFFFFFu;
+    if (x0 < -128 || x1 > 640 + 128) {
+        sStretchTex = tex;
+        sStretchUntil = sFrame + 2;
+    }
+    if (tex == sStretchTex && sFrame <= sStretchUntil) return 2;
     return gx_canvas_whole(x0, y0, x1 - x0, y1 - y0) ? 2 : 0;
 }
 
