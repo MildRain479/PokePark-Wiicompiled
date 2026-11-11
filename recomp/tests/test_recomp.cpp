@@ -11,6 +11,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "recomp_funcs.h"
 extern "C" {
@@ -389,6 +390,105 @@ static void test_sd() {
     printf("SD card: a photo copied as the game's SD manager does it\n");
 }
 
+#include "../boot/wii_save.h"
+
+static void put_be32(uint8_t* p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+
+static std::string read_file(const std::string& path) {
+    std::string s;
+    FILE* f = fopen(path.c_str(), "rb");
+    char b[4096];
+    size_t n;
+    if (!f) return "(none)";
+    while ((n = fread(b, 1, sizeof(b), f)) > 0) s.append(b, n);
+    fclose(f);
+    return s;
+}
+
+// A data.bin made as a Wii makes one (encrypted with the SD key), read
+// back, and put in place of a save in a NAND folder, twice.
+static void test_wii_save() {
+    // FIPS-197's example: AES-128 of 00112233... with the key 00010203...
+    uint8_t key[16], block[16], iv[16] = {0}, out[16];
+    static const uint8_t want[16] = {0x69, 0xC4, 0xE0, 0xD8, 0x6A, 0x7B, 0x04, 0x30,
+                                     0xD8, 0xCD, 0xB7, 0x80, 0x70, 0xB4, 0xC5, 0x5A};
+    for (int i = 0; i < 16; i++) key[i] = (uint8_t)i, block[i] = (uint8_t)(i * 0x11);
+    wiisave_aes_cbc(key, iv, block, out, 16, 0);
+    check(memcmp(out, want, 16) == 0, "Wii save", "AES-128 encrypts FIPS-197's example wrong");
+    memset(iv, 0, 16);
+    wiisave_aes_cbc(key, iv, out, out, 16, 1);
+    check(memcmp(out, block, 16) == 0, "Wii save", "AES-128 decrypts FIPS-197's example wrong");
+
+    struct { const char* name; std::string data; } files[] = {
+        {"GWD", std::string(9376, 'w')}, {"GD0", std::string(14912, '0')}, {"Pic0", std::string(1000, 'p')}};
+    std::string banner(0x72A0, 'b');
+    std::vector<uint8_t> bin(0xF0C0 + 0x80);
+    put_be32(&bin[0], 0x00010000);
+    put_be32(&bin[4], 0x52384145);
+    put_be32(&bin[8], (uint32_t)banner.size());
+    memcpy(&bin[0x20], banner.data(), banner.size());
+    memcpy(iv, kWiiSdIv, 16);
+    wiisave_aes_cbc(kWiiSdKey, iv, &bin[0], &bin[0], 0xF0C0, 0);
+    put_be32(&bin[0xF0C0], 0x70);
+    put_be32(&bin[0xF0C4], 0x426B0001);
+    put_be32(&bin[0xF0CC], 3);
+    for (auto& f : files) {
+        size_t at = bin.size(), padded = (f.data.size() + 0x3F) & ~(size_t)0x3F;
+        bin.resize(at + 0x80 + padded);
+        put_be32(&bin[at], 0x03ADF17E);
+        put_be32(&bin[at + 4], (uint32_t)f.data.size());
+        bin[at + 0x0A] = 1;
+        strcpy((char*)&bin[at + 0x0B], f.name);
+        for (int i = 0; i < 16; i++) bin[at + 0x50 + i] = (uint8_t)(i * 7 + f.data.size());
+        memcpy(iv, &bin[at + 0x50], 16);
+        memcpy(&bin[at + 0x80], f.data.data(), f.data.size());
+        wiisave_aes_cbc(kWiiSdKey, iv, &bin[at + 0x80], &bin[at + 0x80], padded, 0);
+    }
+    bin.resize(bin.size() + 0x340); // the certificates
+    std::vector<uint8_t> other = bin;
+
+    WiiSaveFile got[16];
+    int n = 0;
+    check(wiisave_read_bin(&bin[0], bin.size(), got, 16, &n) == WIISAVE_OK && n == 4, "Wii save",
+          "data.bin not read (%d files)", n);
+    check(n == 4 && !strcmp(got[0].name, "banner.bin") && std::string((const char*)got[0].data, got[0].size) == banner,
+          "Wii save", "banner");
+    for (int i = 1; i < n; i++)
+        check(!strcmp(got[i].name, files[i - 1].name) &&
+                  std::string((const char*)got[i].data, got[i].size) == files[i - 1].data,
+              "Wii save", "file %d", i);
+    memcpy(iv, kWiiSdIv, 16);
+    wiisave_aes_cbc(kWiiSdKey, iv, &other[0], &other[0], 0xF0C0, 1);
+    put_be32(&other[4], 0x52384150); // R8AP: Europe's
+    memcpy(iv, kWiiSdIv, 16);
+    wiisave_aes_cbc(kWiiSdKey, iv, &other[0], &other[0], 0xF0C0, 0);
+    check(wiisave_read_bin(&other[0], other.size(), got + 8, 8, &n) == WIISAVE_OTHER_GAME, "Wii save",
+          "another game's save taken");
+    std::vector<uint8_t> junk(0x20000, 0x5A);
+    check(wiisave_read_bin(&junk[0], junk.size(), got + 8, 8, &n) == WIISAVE_NOT_A_SAVE, "Wii save", "junk taken");
+
+    // Into a NAND folder with a save already in it, which is kept.
+    const char* tmp = getenv("TEMP") ? getenv("TEMP") : "/tmp";
+    std::string root = std::string(tmp) + "/recomp_test_nand", title = root + "/title/00010000/52384145";
+    WiiSaveFile old[2] = {{"GWD", (const uint8_t*)"old", 3}, {"GD1", (const uint8_t*)"one", 3}};
+    wiisave_install(root.c_str(), old, 2); // (left from a run before or not)
+    check(wiisave_install(root.c_str(), old, 2) == WIISAVE_OK, "Wii save", "old save not installed");
+    check(wiisave_install(root.c_str(), got, 4) == WIISAVE_OK, "Wii save", "not installed");
+    check(read_file(title + "/data/GWD") == files[0].data && read_file(title + "/data/banner.bin") == banner &&
+              read_file(title + "/data/GD1") == "(none)",
+          "Wii save", "installed files");
+    check(read_file(title + "/data before import/GWD") == "old" && read_file(title + "/data before import/GD1") == "one",
+          "Wii save", "old save not kept");
+    WiiSaveFile bad[1] = {{"../GWD", (const uint8_t*)"x", 1}};
+    check(wiisave_install(root.c_str(), bad, 1) == WIISAVE_NOT_A_SAVE, "Wii save", "a path taken as a name");
+    printf("Wii save: a data.bin read and put in place\n");
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s <main.dol>\n", argv[0]);
@@ -413,6 +513,7 @@ int main(int argc, char** argv) {
     test_hook();
     test_math();
     test_sd();
+    test_wii_save();
 
     printf("%d checks, %d failures\n", gChecks, gFailures);
     return gFailures ? 1 : 0;

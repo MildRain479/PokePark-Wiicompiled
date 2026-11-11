@@ -39,6 +39,9 @@ void hle_nand_set_root(const char* root) {
     ensure_setting_txt();
 }
 
+/* The host folder the NAND is in (wii_save.c puts imported saves there). */
+const char* hle_nand_root(void) { return sRoot; }
+
 /* Host path for a NAND path; rejects anything that could escape the root. */
 static int host_path(const char* nand, char* out, size_t n) {
     if (nand[0] != '/' || strstr(nand, "..")) return 0;

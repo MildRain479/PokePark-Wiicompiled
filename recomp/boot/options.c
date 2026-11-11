@@ -28,6 +28,7 @@
 #include "host_settings.h"
 
 #include "canvas.h"
+#include "wii_save.h"
 
 int hle_pause_main_page(void); /* hle_pause.c */
 int hle_file_select_shown(void);
@@ -61,9 +62,10 @@ static int sections(void) { return SECTIONS; }
 #endif
 
 /* A row: a setting (settings_step), a binding (an action), resetting the
- * controls, or closing the game (selected twice, as unsaved progress is
- * lost). */
-enum { ROW_SETTING, ROW_BINDING, ROW_RESET, ROW_CLOSE };
+ * controls, closing the game (selected twice, as unsaved progress is
+ * lost), or bringing over a save from a Wii or Dolphin (only on the save
+ * file screen, where nothing is lost by it). */
+enum { ROW_SETTING, ROW_BINDING, ROW_RESET, ROW_CLOSE, ROW_IMPORT };
 typedef struct {
     int kind, which;
     const char* label;
@@ -113,9 +115,12 @@ static const char* const kAction[ACT_COUNT] = {
 #define TOUCH_ROW 0
 #endif
 
+#define GAMEPLAY_ROWS (int)(sizeof(kGameplay) / sizeof(kGameplay[0]))
+static int import_shown(void);
+
 static int row_count(int sec) {
     return sec == SEC_DISPLAY    ? (int)(sizeof(kDisplay) / sizeof(kDisplay[0]))
-           : sec == SEC_GAMEPLAY ? (int)(sizeof(kGameplay) / sizeof(kGameplay[0]))
+           : sec == SEC_GAMEPLAY ? GAMEPLAY_ROWS + import_shown()
            : sec == SEC_DUAL     ? (int)(sizeof(kDual) / sizeof(kDual[0]))
            : sec == SEC_KEYBOARD ? ACT_COUNT + 3 /* camera speed, invert, reset */
                                  : TOUCH_ROW + ACT_COUNT + 2; /* (touch controls,) rumble, reset */
@@ -124,6 +129,11 @@ static int row_count(int sec) {
 static Row row_at(int sec, int i) {
     Row r = {ROW_RESET, 0, "Reset all controls"};
     if (sec == SEC_DISPLAY) return kDisplay[i];
+    if (sec == SEC_GAMEPLAY && i == GAMEPLAY_ROWS) {
+        r.kind = ROW_IMPORT;
+        r.label = "Import Wii save";
+        return r;
+    }
     if (sec == SEC_GAMEPLAY) return kGameplay[i];
     if (sec == SEC_DUAL) return kDual[i];
     if (TOUCH_ROW && sec == SEC_CONTROLLER && i-- == 0) {
@@ -244,6 +254,12 @@ static void changed(void) { sChanges++; }
 static unsigned sCloseArmed = ~0u;
 static int close_armed(void) { return sCloseArmed == sChanges; }
 
+/* What importing a save came to (wiisave_message), shown until something
+ * changes. */
+static const char* sImportResult;
+static unsigned sImportShown = ~0u;
+static int import_shown(void) { return sFrom == FROM_FILES; }
+
 /* Whether what it opens from is showing. */
 static int shown(int from) { return from == FROM_PAD ? hle_pause_main_page() : hle_file_select_shown(); }
 
@@ -251,6 +267,7 @@ static void set_open(int open);
 
 static void open_from(int from) {
     sFrom = from;
+    if (sRow >= row_count(sSection)) sRow = sTop = 0; /* (the import row, shown only from the files) */
     set_open(1);
 }
 
@@ -330,6 +347,12 @@ static void select_(void) {
         settings_step(r.which, 1);
     } else if (r.kind == ROW_BINDING) {
         sCapture = sSection == SEC_CONTROLLER ? CAPTURE_PAD : CAPTURE_KEY;
+    } else if (r.kind == ROW_IMPORT) {
+        int res = save_import(); /* restarts the game once it's done */
+        changed();
+        sImportResult = res < 0 ? NULL : res == WIISAVE_OK ? "Restart the game" : wiisave_message(res);
+        sImportShown = sChanges;
+        return;
     } else if (r.kind == ROW_CLOSE) {
         if (close_armed()) exit(0); /* as closing the window does */
         changed();
@@ -540,6 +563,9 @@ static void draw_book(void) {
             }
         } else if (r.kind == ROW_CLOSE) {
             if (close_armed()) draw_text("Again to close", 1190, my + 2, 34, ALIGN_CENTRE, WAIT, 0, 0, 1, 230);
+        } else if (r.kind == ROW_IMPORT) {
+            if (sImportResult && sImportShown == sChanges)
+                draw_text(sImportResult, 1190, my + 2, 34, ALIGN_CENTRE, WAIT, 0, 0, 1, 230);
         } else if (r.kind == ROW_BINDING) {
             int k;
             for (k = 0; k < BIND_SLOTS; k++) {

@@ -7,12 +7,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
+import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.Display;
 import android.view.InputDevice;
@@ -25,6 +27,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 
 /**
  * The app's activity: NativeActivity (window_android.c runs the game), and
@@ -39,15 +42,19 @@ import java.net.URL;
  * go to the native side (second_screen_android.c), shown and hidden as its
  * settings say. And for the photos the game copies to its SD card
  * (sdcard_android.c): asking for a folder for them, and making each one
- * there.
+ * there. And for bringing over a save (save_import_android.c): asking for
+ * its files, and starting the game again once they're in place.
  */
 public class PokeParkActivity extends NativeActivity {
     private static final int PICK = 1;
     private static final int PICK_FOLDER = 2;
+    private static final int PICK_SAVE = 3;
     private static final String DISC = "disc";
     private static final String PHOTOS = "photos";
     private volatile int pickedFd = -1;
     private volatile int pickedFolder = -1;
+    private volatile int pickedSave = -1;
+    private final ArrayList<Uri> saveFiles = new ArrayList<>();
     private String asking;
 
     private SharedPreferences prefs() {
@@ -334,8 +341,69 @@ public class PokeParkActivity extends NativeActivity {
         }
     }
 
+    /** Asks for a save to bring over: a Wii's data.bin, or the files of
+     * Dolphin's save folder, several at once (from native code;
+     * takeSaveCount answers). */
+    public void chooseSave() {
+        pickedSave = -1;
+        runOnUiThread(() -> {
+            Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            pick.addCategory(Intent.CATEGORY_OPENABLE);
+            pick.setType("*/*");
+            pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            try {
+                startActivityForResult(pick, PICK_SAVE);
+            } catch (Exception e) {
+                Log.w("PokePark", "no file picker", e);
+                pickedSave = 0;
+            }
+        });
+    }
+
+    /** -1 while asking, then how many files were chosen (polled from
+     * native code). */
+    public int takeSaveCount() {
+        return pickedSave;
+    }
+
+    /** The name of chosen file i (from native code). */
+    public String saveName(int i) {
+        try (Cursor c = getContentResolver().query(saveFiles.get(i),
+                new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) return c.getString(0);
+        } catch (Exception e) {
+            Log.w("PokePark", "no name for " + saveFiles.get(i), e);
+        }
+        return "";
+    }
+
+    /** Chosen file i, open for reading, or -1 (from native code). */
+    public int openSave(int i) {
+        return open(saveFiles.get(i));
+    }
+
+    /** Starts the game again, in a new process (from native code). */
+    public void restartGame() {
+        Intent start = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (start == null) return;
+        startActivity(Intent.makeRestartActivityTask(start.getComponent()));
+        Runtime.getRuntime().exit(0);
+    }
+
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
+        if (request == PICK_SAVE) {
+            saveFiles.clear();
+            if (result == RESULT_OK && data != null) {
+                if (data.getClipData() != null)
+                    for (int i = 0; i < data.getClipData().getItemCount(); i++)
+                        saveFiles.add(data.getClipData().getItemAt(i).getUri());
+                else if (data.getData() != null)
+                    saveFiles.add(data.getData());
+            }
+            pickedSave = saveFiles.size();
+            return;
+        }
         if (request == PICK_FOLDER) {
             Uri uri = result == RESULT_OK && data != null ? data.getData() : null;
             if (uri != null) {

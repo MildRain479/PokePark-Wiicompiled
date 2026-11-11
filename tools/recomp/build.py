@@ -50,6 +50,7 @@ TARGETS = {
         os.path.join(ROOT, "src", "flib", "CodepointConvert.cpp"),
         os.path.join(ROOT, "src", "flib", "FName.cpp"),
         os.path.join(ROOT, "recomp", "boot", "disc_verify.c"),
+        os.path.join(ROOT, "recomp", "boot", "wii_save.c"),
     ],
     "boot": sorted(s for s in glob.glob(os.path.join(ROOT, "recomp", "boot", "*.c")) +
                    glob.glob(os.path.join(ROOT, "recomp", "gpu", "*.c")) if not s.endswith("_android.c")),
