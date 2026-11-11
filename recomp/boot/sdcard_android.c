@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <jni.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,16 +25,24 @@ extern struct android_app* g_android_app; /* window_android.c */
 
 static const char* sDir; /* RECOMP_SD_DIR */
 
+typedef struct {
+    const char *name, *sig, *arg;
+    int result;
+} Call;
+
 /* The activity's method name, with the signature sig, called; its int
- * result, or -1. */
-static int call(const char* name, const char* sig, const char* arg) {
+ * result, or -1. On a thread of its own (call()), attached for it. */
+static void* call_thread(void* p) {
+    Call* k = p;
     JavaVM* vm = g_android_app ? g_android_app->activity->vm : NULL;
     jobject act = g_android_app ? g_android_app->activity->clazz : NULL;
+    const char *name = k->name, *sig = k->sig, *arg = k->arg;
     JNIEnv* env;
     jclass cls;
     jmethodID m;
     int r = -1;
-    if (!vm || (*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return -1;
+    k->result = -1;
+    if (!vm || (*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return NULL;
     cls = (*env)->GetObjectClass(env, act);
     m = (*env)->GetMethodID(env, cls, name, sig);
     if (m && arg) {
@@ -52,7 +61,20 @@ static int call(const char* name, const char* sig, const char* arg) {
         r = -1;
     }
     (*env)->DeleteLocalRef(env, cls);
-    return r;
+    (*vm)->DetachCurrentThread(vm);
+    k->result = r;
+    return NULL;
+}
+
+/* The game asks on its own thread's fiber stacks (hle_thread.c), which
+ * the Java VM takes for an overflowed stack (StackOverflowError), so the
+ * call is made on a thread of its own, and waited for. */
+static int call(const char* name, const char* sig, const char* arg) {
+    Call k = {name, sig, arg, -1};
+    pthread_t t;
+    if (pthread_create(&t, NULL, call_thread, &k)) return -1;
+    pthread_join(t, NULL);
+    return k.result;
 }
 
 static int choose(void) {
