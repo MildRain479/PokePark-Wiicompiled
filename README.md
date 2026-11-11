@@ -105,9 +105,11 @@ progress, attractions and photos.
    - **Windows:** `R8AE01\nand\title\00010000\52384145\data`, beside
      `PokePark.exe`.
    - **Android:** `Android/data/io.github.pokeparkrecomp/files/R8AE01/nand/title/00010000/52384145/data`
-     on the phone's storage. Android hides this folder from most file
-     managers; connect the phone to a computer with a USB cable and
-     choose **File transfer**, and it shows up there.
+     on the phone's storage. The phone's own Files app hides this
+     folder, but other file managers, such as CX File Explorer, can open
+     it (allow access to the folder when asked). Or connect the phone to
+     a computer with a USB cable and choose **File transfer**, and it
+     shows up there.
 
    Start the game once first if that folder isn't there yet.
 3. Copy everything in Dolphin's `data` folder (`GD0` to `GD3`, `GWD`,
