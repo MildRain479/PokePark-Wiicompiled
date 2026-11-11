@@ -638,6 +638,20 @@ int main(int argc, char** argv) {
         slash = strrchr(root, '/');
         if (slash) strcpy(slash + 1, "disc");
         else strcpy(root, "disc");
+        {
+            /* dtk's own layout, <dir>/disc/sys/main.dol with the disc's
+             * files beside sys: that disc folder itself. */
+            char probe[1100];
+            FILE* f;
+            snprintf(probe, sizeof(probe), "%s/sys/boot.bin", root);
+            if (!(f = fopen(probe, "rb")) && (slash = strrchr(root, '/')) && slash - root >= 4 &&
+                !strncmp(slash - 4, "disc", 4)) {
+                *slash = '\0';
+                snprintf(probe, sizeof(probe), "%s/sys/boot.bin", root);
+                if (!(f = fopen(probe, "rb"))) *slash = '/';
+            }
+            if (f) fclose(f);
+        }
 #ifdef __ANDROID__
         if (disc_image_active() ? disc_image_dvd_init() == 0 : hle_dvd_init(root) == 0) {
 #else
