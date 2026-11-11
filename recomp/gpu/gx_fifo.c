@@ -1093,17 +1093,21 @@ int gx_canvas_whole(float x, float y, float w, float h); /* gx_frames.c */
  * st: 1 if it is the world in 3D (a perspective projection with a far
  * plane past 2000) over the whole picture; 2 if it covers the whole
  * picture otherwise (2D, or the 2D screens' 3D), in up to 64 vertices;
- * else 0. */
+ * else 0. A flat quad of the world's facing the camera over the whole
+ * picture is a screen effect drawn in front of it (the dash's blur, a
+ * copy of the picture on a quad just past the near plane), so it's 2:
+ * held where it was, it covered only the 16:9 middle. */
 static int canvas_kind(const GXDrawState* st, const uint8_t* p, const VtxFormat* f, int count) {
     static GXVertex v[64];
     GXVertex tpl;
-    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-    int i, persp = !xf[0x1026];
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
+    int i, persp = !xf[0x1026], world;
     if (!sCanvasOn || !gx_canvas_whole(st->viewport[0], st->viewport[1], st->viewport[2], st->viewport[3])) return 0;
     /* The park's cameras see to 9999; the 2D screens' 3D (the menus'
      * boards, close-ups) only to 1000, and stays in the picture, as the
      * rest of the screen does. */
-    if (persp && xf_float(0x1024) != 0 && xf_float(0x1025) / xf_float(0x1024) > 2000) return 1;
+    world = persp && xf_float(0x1024) != 0 && xf_float(0x1025) / xf_float(0x1024) > 2000;
+    if (world && (count > 4 || count <= 0)) return 1;
     if (count > 64 || count <= 0) return 0;
     vertex_template(&tpl);
     for (i = 0; i < count; i++) v[i] = tpl;
@@ -1115,8 +1119,10 @@ static int canvas_kind(const GXDrawState* st, const uint8_t* p, const VtxFormat*
         float wy = xf_float(m + 4) * q[0] + xf_float(m + 5) * q[1] + xf_float(m + 6) * q[2] + xf_float(m + 7);
         float wz = xf_float(m + 8) * q[0] + xf_float(m + 9) * q[1] + xf_float(m + 10) * q[2] + xf_float(m + 11);
         float cx, cy, x, y;
+        if (wz < z0) z0 = wz;
+        if (wz > z1) z1 = wz;
         if (persp) {
-            if (wz >= 0) return 0; /* behind the camera */
+            if (wz >= 0) return world; /* behind the camera */
             cx = (xf_float(0x1020) * wx + xf_float(0x1021) * wz) / -wz;
             cy = (xf_float(0x1022) * wy + xf_float(0x1023) * wz) / -wz;
         } else {
@@ -1130,6 +1136,7 @@ static int canvas_kind(const GXDrawState* st, const uint8_t* p, const VtxFormat*
         if (y < y0) y0 = y;
         if (y > y1) y1 = y;
     }
+    if (world) return gx_canvas_whole(x0, y0, x1 - x0, y1 - y0) && z1 - z0 <= -z1 * 0.001f ? 2 : 1;
     return gx_canvas_whole(x0, y0, x1 - x0, y1 - y0) ? 2 : 0;
 }
 
