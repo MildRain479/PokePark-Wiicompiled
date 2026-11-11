@@ -80,6 +80,45 @@ yet, so please report how it goes.
 The Deck's controls work as an Xbox controller. If something doesn't
 work, open an issue saying so, with your Proton version.
 
+## Bringing over a save from a Wii or Dolphin
+
+The game keeps its saves where a Wii does, in the same files, so a save
+from your Wii or from Dolphin carries on where you left off: friends,
+progress, attractions and photos.
+
+**From a Wii.** A Wii copies saves to an SD card encrypted, so Dolphin
+(free, [dolphin-emu.org](https://dolphin-emu.org)) is used to unpack it:
+
+1. On the Wii, go to **Wii Options > Data Management > Save Data > Wii**,
+   choose PokéPark Wii and **Copy** it to an SD card. It's saved as
+   `private\wii\title\R8AE\data.bin` on the card.
+2. In Dolphin, choose **Tools > Import Wii Save...** and pick that
+   `data.bin`.
+3. Carry on as from Dolphin, below.
+
+**From Dolphin.**
+
+1. In Dolphin, choose **File > Open User Folder**. The save is in
+   `Wii\title\00010000\52384145\data` there.
+2. Close the game if it's running, and keep a copy of its own save folder
+   in case you want it back:
+   - **Windows:** `R8AE01\nand\title\00010000\52384145\data`, beside
+     `PokePark.exe`.
+   - **Android:** `Android/data/io.github.pokeparkrecomp/files/R8AE01/nand/title/00010000/52384145/data`
+     on the phone's storage. Android hides this folder from most file
+     managers; connect the phone to a computer with a USB cable and
+     choose **File transfer**, and it shows up there.
+
+   Start the game once first if that folder isn't there yet.
+3. Copy everything in Dolphin's `data` folder (`GD0` to `GD3`, `GWD`,
+   `Pic0` to `Pic3`, `banner.bin`) into the game's `data` folder,
+   replacing what's there.
+4. Start the game; your save files are on the save files screen.
+
+Saves go the other way too: copy the game's `data` folder into Dolphin's,
+and on to a Wii by right-clicking the game in Dolphin's list and choosing
+**Export Wii Save**, which writes a `data.bin` to copy to the SD card.
+
 ## Improvements over the Wii version
 
 ### Graphics
