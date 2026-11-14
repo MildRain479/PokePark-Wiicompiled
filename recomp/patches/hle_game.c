@@ -5,8 +5,8 @@
  * StartMenu (title). Strap sets up the game and starts ParkPrepare, the
  * background load of the park's data, and stays up for a fixed time; Hold
  * then shows for a few more seconds after the load has finished. Here
- * Strap hands over to Hold as soon as the load is done. Hold still runs
- * its course (see f_80173E10). RECOMP_BOOT_SCREENS=1 keeps the original
+ * Strap ends as soon as the load is done, and Hold on its first frame
+ * (see f_8016ED00). RECOMP_BOOT_SCREENS=1 keeps the original
  * screens. */
 #include <math.h>
 #include <stdlib.h>
@@ -30,37 +30,12 @@ static int keep_boot_screens(void) {
 }
 
 static int sScene = -1;
-static int sSwallowChange;
 
 /* BOOL fn_801741F0(s32 scene): picks the next scene, by index. */
 void f_801741F0(ppc_t* c) {
-    /* The Strap scene's script, still running after f_80173E10 has left
-     * it, picks Hold again when its time is up: see f_8016C950. */
-    if (sLeftStrap == 1 && sScene == SCENE_HOLD && c->r[3] == SCENE_HOLD) {
-        sLeftStrap = 2;
-        sSwallowChange = 1;
-        c->r[3] = 1;
-        return;
-    }
     HLE_LOG("next scene: %d", (int)c->r[3]);
     sScene = (int)c->r[3];
     f_801741F0_orig(c);
-}
-
-/* void SceneManager::fn_8016C950(void): sets fChangeScene (+0x2C), which
- * switches to the scene picked. Not for the Strap script's late switch to
- * Hold (above): coming after the one f_80173E10 made, it would start Hold
- * over, reinitializing the heaps under what the boot screens had loaded.
- * PrepareSceneDat, with every minigame's records, was among it, and the
- * resource manager went on finding the records there: a minigame's lobby
- * then read garbage for them and never got as far as showing the friends
- * to pick from. */
-void f_8016C950(ppc_t* c) {
-    if (sSwallowChange) {
-        sSwallowChange = 0;
-        return;
-    }
-    f_8016C950_orig(c);
 }
 
 /* Whether the scene is a minigame (an attraction). */
@@ -122,20 +97,35 @@ void f_80171630(ppc_t* c) {
 }
 
 /* void SceneSpecializerStrap::RunSystem(void): runs every frame. Once the
- * park has loaded, does what the Strap scene's script does when its time
- * is up (scene syscall 0x15, subcommands 1 and 2): pick the next scene,
- * Hold, then start the switch. Hold must not be skipped: the game records
- * that it has run, and a new game started before it has goes through Hold
- * after the opening, and Hold always leads to the start menu. (Leaving
- * Hold as soon as it has seen the load done isn't enough either: its
- * script records it at the end.) */
+ * park has loaded, ends the Strap scene, as a minigame's gate ends the
+ * park's (f_80171630). The boot sequencer then goes on to Hold, as it does
+ * when Strap's script ends it. */
 void f_80173E10(ppc_t* c) {
     if (!sLeftStrap && LD32(PARK_PREPARE_STATE) == PARK_PREPARE_DONE && !keep_boot_screens()) {
         sLeftStrap = 1;
-        c->r[3] = SCENE_HOLD;
-        f_801741F0(c);
         f_80019620(c); /* SceneManager::Get */
-        f_8016C950(c); /* sets fChangeScene (+0x2C) */
+        hle_call(c, END_SCENE, c->r[3], 0);
+    }
+}
+
+/* void SceneSpecializerHold::RunUpdate(void): Hold's frames, from its
+ * first. Hold is the one scene built on SceneSpecializerPrepare, whose
+ * Prepare and OnEnter set up what stays loaded from then on (the loading
+ * screen, PrepareSceneDat with every minigame's records), so it can't be
+ * left out; but with the park loaded it has nothing left to wait for, and
+ * ends on its first update. The boot sequencer, which goes on to the start
+ * menu once Hold has ended, must see it end: switching to the start menu
+ * any other way leaves it waiting on Hold, and the first scene to end
+ * after (the start menu, a game picked) went to Hold and back to the
+ * title, a new game after its opening. */
+void f_8016ED00(ppc_t* c) {
+    static int left;
+    f_8016ED00_orig(c);
+    if (!left && sLeftStrap && LD32(PARK_PREPARE_STATE) == PARK_PREPARE_DONE) {
+        left = 1;
+        HLE_LOG("boot: Hold ended");
+        f_80019620(c); /* SceneManager::Get */
+        hle_call(c, END_SCENE, c->r[3], 0);
     }
 }
 

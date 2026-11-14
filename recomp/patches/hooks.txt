@@ -35,6 +35,7 @@
 0x8022FC70 __AXGetAuxCOutput  # hle_audio.c: where the DSP mixes the aux buses
 0x801741F0 fn_801741F0  # hle_game.c: logs scene changes
 0x80173E10 SceneSpecializerStrap::RunSystem  # hle_game.c: leave as soon as the park has loaded
+0x8016ED00 SceneSpecializerHold::RunUpdate  # hle_game.c: Hold ends on its first frame
 0x80247F10 WPADProbe  # hle_wpad.c: remote 0 connected, the rest absent
 0x80248030 WPADSetConnectCallback  # hle_wpad.c
 0x802480C0 WPADSetExtensionCallback  # hle_wpad.c
@@ -75,7 +76,6 @@
 0x802EE5D0 fscript::Run  # hle_pause.c: whether the password screen is up
 0x80125F70 nsDelhi::nsMenu::MenuScriptStartMenu::syscall0x15  # hle_pause.c: all the passwords at once
 0x80171630 SceneSpecializerPark::RunBegin  # hle_game.c: entering a minigame for testing
-0x8016C950 SceneManager::fn_8016C950  # hle_game.c: no second switch to Hold after leaving Strap early
 0x801081C0 resident_messageId_to_string  # hle_text.c: minigame instructions for the PC controls
 0x80109630 fn_80109630  # hle_modifiers.c: dialogue speed
 0x801279B0 nsDelhi::nsGlobal::OtherDataSingleMode::virt0x58  # hle_modifiers.c: berry modifiers

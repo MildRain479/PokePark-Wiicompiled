@@ -88,9 +88,8 @@ git-ignored, and is created on first run.
 3. The game runs six threads.
 4. It loads its data through its own DVD library.
 5. It draws in a window through OpenGL or Vulkan. The wrist strap safety screen
-   is cut short and "Hold Wii Remote Horizontally" shown for its usual
-   few seconds (see `hle_game.c`), so the title comes up about 7 s after
-   start instead of about 28 s.
+   and "Hold Wii Remote Horizontally" are cut short (see `hle_game.c`), so
+   the title comes up about 3 s after start instead of about 28 s.
 6. It creates its save files and copies the Pokémon resources into a
    cache on the NAND.
 7. It reaches the title screen, with its THP movie background.
@@ -335,7 +334,7 @@ Diagnostics:
 | `hle_font.c` | The Wii system font, which `OSInitFont` reads from the boot ROM: `ReadFont` builds the ANSI font from host glyphs (`host_font.h`; GDI's Segoe UI Semibold in `recomp/boot/font_win32.c`), in the ROM font's format, and the SDK expands it as usual. |
 | `hle_camera.c` | Mouse camera: the mouse turns the player camera's (`CameraPlayer`) yaw and its easing target, and swings the eye the game rebuilds that yaw from while Pikachu moves (so turning works while running and steers the run), so the game's own follow, distance and wall collision carry the turn on; up and down tilt it as an offset on the pitch the game picks from the slope ahead, kept off while the game works that pitch out. B recenters as on the Wii and clears the tilt. |
 | `hle_thp.c` | THP movie video: `THPVideoDecode` decoded natively (baseline JPEG without byte stuffing, written as I8 tiles). The game's decoder took ~12 ms a frame in recompiled code. The output matches it to within a few levels on under 0.5% of bytes (IDCT rounding). |
-| `hle_game.c` | Not hardware: game changes. The game's four frame-step constants (1/59.94 s and 2/59.94 s) follow `RECOMP_VI_HZ`, chosen so the 30 Hz alarm's period is exactly twice the 60 Hz one (otherwise the two drift apart and the game can settle at 15 fps). The boot cuts the Strap (safety) screen short: it hands over to Hold (sideways) as soon as the park data has loaded, about 1 s in, instead of after its 21 s timer. Hold runs its course (about 4 s): skipping it sent the first new game of a session back to the title after the opening. `RECOMP_BOOT_SCREENS=1` keeps the Strap timer. Holding + for half a second skips a movie that doesn't loop (the opening, the ending): `ThpManager`'s state poll is told it has finished. |
+| `hle_game.c` | Not hardware: game changes. The game's four frame-step constants (1/59.94 s and 2/59.94 s) follow `RECOMP_VI_HZ`, chosen so the 30 Hz alarm's period is exactly twice the 60 Hz one (otherwise the two drift apart and the game can settle at 15 fps). The boot cuts the Strap (safety) screen short: it ends as soon as the park data has loaded, about 1 s in, instead of after its 21 s timer. Hold (sideways) then ends on its first frame. It still runs, as its Prepare and OnEnter set up what stays loaded (the loading screen, PrepareSceneDat), and it ends the game's way, so that the boot sequencer moves on to the start menu's (switching to the start menu around it sent the first new game of a session back to the title after the opening). `RECOMP_BOOT_SCREENS=1` keeps both screens. Holding + for half a second skips a movie that doesn't loop (the opening, the ending): `ThpManager`'s state poll is told it has finished. |
 
 **Memory differences from a Wii:**
 - **MEM2:** the game also gets the top of MEM2 that IOS normally keeps
