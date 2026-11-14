@@ -1,0 +1,255 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "PokePark Wiicompiled",
+  "repo": "MildRain479/PokePark-Wiicompiled",
+  "game": {
+    "kind": "iso",
+    "label": "Your disc image of PokéPark Wii: Pikachu's Adventure (USA, R8AE01): an ISO, RVZ, WBFS or the like.",
+    "check": { "ids": ["R8AE01"] },
+    "dumps": [{ "name": "USA", "crc32": "26e533d5" }]
+  },
+  "start": {
+    "program": ["PokePark.exe"],
+    "args": ["--game", "{game}"]
+  },
+  "prepare": {
+    "program": ["PokePark.exe"],
+    "args": ["--prepare", "--game", "{game}"],
+    "label": "The game's files from your disc image",
+    "timeout": 900
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{install}/settings.ini" }]
+    }
+  ],
+  "saves": [
+    "{install}/R8AE01/nand/title/00010000/52384145/data",
+    "{install}/settings.ini"
+  ],
+  "folders": {
+    "saves": [{ "path": "{install}/R8AE01/nand/title/00010000/52384145/data" }]
+  },
+  "groups": [
+    { "id": "Display" },
+    { "id": "Controls" },
+    { "id": "Gameplay" },
+    { "id": "Updates" }
+  ],
+  "settings": [
+    {
+      "id": "window", "label": "Window", "group": "Display",
+      "help": "Fullscreen is borderless on the window's screen. Alt+Enter switches in the game.",
+      "choices": [
+        { "label": "Windowed", "set": { "display/fullscreen": "0" } },
+        { "label": "Fullscreen", "set": { "display/fullscreen": "1" } }
+      ],
+      "defaults": { "display/fullscreen": "0" }
+    },
+    {
+      "id": "resolution", "label": "Resolution", "group": "Display",
+      "help": "How many times the Wii's resolution the game draws at. 3x is pixel for pixel on a 1440p screen. Fit window picks one for the window.",
+      "choices": [
+        { "label": "Fit window", "set": { "display/scale": "0" } },
+        { "label": "1x", "set": { "display/scale": "1" } },
+        { "label": "2x", "set": { "display/scale": "2" } },
+        { "label": "3x", "set": { "display/scale": "3" } },
+        { "label": "4x", "set": { "display/scale": "4" } },
+        { "label": "5x", "set": { "display/scale": "5" } },
+        { "label": "6x", "set": { "display/scale": "6" } }
+      ],
+      "defaults": { "display/scale": "0" }
+    },
+    {
+      "id": "frame_rate", "label": "Frame rate", "group": "Display",
+      "help": "30 is the game's own. Above 60, extra frames are made between the game's, and the game still updates 60 times a second.",
+      "choices": [
+        { "label": "30", "set": { "display/frame_rate": "30" } },
+        { "label": "60", "set": { "display/frame_rate": "60" } },
+        { "label": "120", "set": { "display/frame_rate": "120" } },
+        { "label": "144", "set": { "display/frame_rate": "144" } },
+        { "label": "165", "set": { "display/frame_rate": "165" } },
+        { "label": "240", "set": { "display/frame_rate": "240" } }
+      ],
+      "defaults": { "display/frame_rate": "30" }
+    },
+    {
+      "id": "aspect", "label": "Aspect ratio", "group": "Display",
+      "help": "16:9 is the game's own. 16:10 and 21:9 show more of the park above and below or at the sides. 4:3 applies from the next start.",
+      "choices": [
+        { "label": "4:3", "set": { "display/aspect": "4:3" } },
+        { "label": "16:9", "set": { "display/aspect": "16:9" } },
+        { "label": "16:10", "set": { "display/aspect": "16:10" } },
+        { "label": "21:9", "set": { "display/aspect": "21:9" } }
+      ],
+      "defaults": { "display/aspect": "16:9" }
+    },
+    {
+      "id": "msaa", "label": "Anti-aliasing", "group": "Display",
+      "help": "Smooths jagged edges. Higher costs more on the graphics card.",
+      "choices": [
+        { "label": "Off", "set": { "display/msaa": "1" } },
+        { "label": "2x", "set": { "display/msaa": "2" } },
+        { "label": "4x", "set": { "display/msaa": "4" } },
+        { "label": "8x", "set": { "display/msaa": "8" } }
+      ],
+      "defaults": { "display/msaa": "1" }
+    },
+    {
+      "id": "aniso", "label": "Texture filtering", "group": "Display",
+      "help": "Keeps the ground and walls sharp at an angle. Costs next to nothing.",
+      "choices": [
+        { "label": "Off", "set": { "display/aniso": "1" } },
+        { "label": "2x", "set": { "display/aniso": "2" } },
+        { "label": "4x", "set": { "display/aniso": "4" } },
+        { "label": "8x", "set": { "display/aniso": "8" } },
+        { "label": "16x", "set": { "display/aniso": "16" } }
+      ],
+      "defaults": { "display/aniso": "1" }
+    },
+    {
+      "id": "fov", "label": "Field of view", "group": "Display",
+      "help": "How much of the park you see, as a percent of the game's. Applies in the park.",
+      "slider": { "key": "display/fov", "min": 80, "max": 150, "step": 5, "format": "%d" },
+      "defaults": { "display/fov": "100" }
+    },
+    {
+      "id": "renderer", "label": "Renderer", "group": "Display",
+      "help": "Vulkan is the fastest. OpenGL is for cards without Vulkan 1.3. Applies from the next start.",
+      "choices": [
+        { "label": "Vulkan", "set": { "display/renderer": "vulkan" } },
+        { "label": "OpenGL", "set": { "display/renderer": "opengl" } }
+      ],
+      "defaults": { "display/renderer": "vulkan" }
+    },
+    {
+      "id": "texture_pack", "label": "Texture packs", "group": "Display",
+      "help": "Uses Dolphin texture packs from a textures folder next to the game.",
+      "choices": [
+        { "label": "On", "set": { "display/texture_pack": "1" } },
+        { "label": "Off", "set": { "display/texture_pack": "0" } }
+      ],
+      "defaults": { "display/texture_pack": "1" }
+    },
+    {
+      "id": "sensitivity", "label": "Mouse camera speed", "group": "Controls",
+      "help": "How fast the mouse turns the camera, times the default.",
+      "slider": { "key": "mouse/sensitivity", "min": 0.1, "max": 3, "step": 0.1, "format": "%.2f" },
+      "defaults": { "mouse/sensitivity": "1.00" }
+    },
+    {
+      "id": "invert_tilt", "label": "Invert camera tilt", "group": "Controls",
+      "help": "Mouse up looks down.",
+      "choices": [
+        { "label": "Off", "set": { "mouse/invert_tilt": "0" } },
+        { "label": "On", "set": { "mouse/invert_tilt": "1" } }
+      ],
+      "defaults": { "mouse/invert_tilt": "0" }
+    },
+    {
+      "id": "rumble", "label": "Rumble", "group": "Controls",
+      "help": "How hard a controller shakes.",
+      "choices": [
+        { "label": "Off", "set": { "controller/rumble": "0" } },
+        { "label": "Light", "set": { "controller/rumble": "1" } },
+        { "label": "Normal", "set": { "controller/rumble": "2" } },
+        { "label": "Strong", "set": { "controller/rumble": "3" } }
+      ],
+      "defaults": { "controller/rumble": "2" }
+    },
+    {
+      "id": "text_speed", "label": "Text speed", "group": "Gameplay",
+      "help": "How fast dialogue appears. 1x is the game's.",
+      "choices": [
+        { "label": "1x", "set": { "gameplay/text_speed": "1" } },
+        { "label": "2x", "set": { "gameplay/text_speed": "2" } },
+        { "label": "3x", "set": { "gameplay/text_speed": "3" } },
+        { "label": "A page at once", "set": { "gameplay/text_speed": "0" } }
+      ],
+      "defaults": { "gameplay/text_speed": "1" }
+    },
+    {
+      "id": "berries", "label": "Berries collected", "group": "Gameplay",
+      "help": "How many berries you get, as a percent of the game's.",
+      "choices": [
+        { "label": "50%", "set": { "gameplay/berries": "50" } },
+        { "label": "100%", "set": { "gameplay/berries": "100" } },
+        { "label": "150%", "set": { "gameplay/berries": "150" } },
+        { "label": "200%", "set": { "gameplay/berries": "200" } },
+        { "label": "300%", "set": { "gameplay/berries": "300" } }
+      ],
+      "defaults": { "gameplay/berries": "100" }
+    },
+    {
+      "id": "prices", "label": "Prices", "group": "Gameplay",
+      "help": "What things cost, as a percent of the game's.",
+      "choices": [
+        { "label": "Free", "set": { "gameplay/prices": "0" } },
+        { "label": "50%", "set": { "gameplay/prices": "50" } },
+        { "label": "100%", "set": { "gameplay/prices": "100" } },
+        { "label": "200%", "set": { "gameplay/prices": "200" } }
+      ],
+      "defaults": { "gameplay/prices": "100" }
+    },
+    {
+      "id": "damage_dealt", "label": "Damage dealt", "group": "Gameplay",
+      "help": "The damage Pikachu deals in battles, as a percent of the game's.",
+      "choices": [
+        { "label": "50%", "set": { "gameplay/damage_dealt": "50" } },
+        { "label": "100%", "set": { "gameplay/damage_dealt": "100" } },
+        { "label": "150%", "set": { "gameplay/damage_dealt": "150" } },
+        { "label": "200%", "set": { "gameplay/damage_dealt": "200" } },
+        { "label": "300%", "set": { "gameplay/damage_dealt": "300" } }
+      ],
+      "defaults": { "gameplay/damage_dealt": "100" }
+    },
+    {
+      "id": "damage_taken", "label": "Damage taken", "group": "Gameplay",
+      "help": "The damage Pikachu takes in battles, as a percent of the game's.",
+      "choices": [
+        { "label": "None", "set": { "gameplay/damage_taken": "0" } },
+        { "label": "50%", "set": { "gameplay/damage_taken": "50" } },
+        { "label": "100%", "set": { "gameplay/damage_taken": "100" } },
+        { "label": "200%", "set": { "gameplay/damage_taken": "200" } },
+        { "label": "300%", "set": { "gameplay/damage_taken": "300" } }
+      ],
+      "defaults": { "gameplay/damage_taken": "100" }
+    },
+    {
+      "id": "chase_speed", "label": "Chase speed", "group": "Gameplay",
+      "help": "The speed of the Pokémon you chase, as a percent of the game's.",
+      "choices": [
+        { "label": "50%", "set": { "gameplay/chase_speed": "50" } },
+        { "label": "75%", "set": { "gameplay/chase_speed": "75" } },
+        { "label": "100%", "set": { "gameplay/chase_speed": "100" } },
+        { "label": "125%", "set": { "gameplay/chase_speed": "125" } },
+        { "label": "150%", "set": { "gameplay/chase_speed": "150" } }
+      ],
+      "defaults": { "gameplay/chase_speed": "100" }
+    },
+    {
+      "id": "autosave", "label": "Autosave", "group": "Gameplay",
+      "help": "Saves the game when you make a friend or enter another area.",
+      "choices": [
+        { "label": "Off", "set": { "gameplay/autosave": "0" } },
+        { "label": "On", "set": { "gameplay/autosave": "1" } }
+      ],
+      "defaults": { "gameplay/autosave": "0" }
+    },
+    {
+      "id": "update_check", "label": "Update check", "group": "Updates",
+      "help": "At start the game asks GitHub whether a newer version is out. RecompLauncher updates it for you, so this can stay off.",
+      "choices": [
+        { "label": "On", "set": { "updates/check": "1" } },
+        { "label": "Off", "set": { "updates/check": "0" } }
+      ],
+      "defaults": { "updates/check": "1" }
+    }
+  ],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your save files, in the same format a Wii or Dolphin uses.", "open": "saves" }
+  ]
+}

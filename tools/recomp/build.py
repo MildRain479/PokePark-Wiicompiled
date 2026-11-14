@@ -510,6 +510,8 @@ def main():
         shutil.copy2(os.path.join(OUT, "boot.exe"), os.path.join(rel, "PokePark.exe"))
         shutil.copytree(os.path.join(ROOT, "recomp", "assets", "prompts"), os.path.join(rel, "prompts"))
         shutil.copy2(os.path.join(ROOT, "recomp", "assets", "release_readme.txt"), os.path.join(rel, "README.txt"))
+        # How RecompLauncher sets the game up, starts it and shows its settings.
+        shutil.copy2(os.path.join(ROOT, "recomplauncher.json"), os.path.join(rel, "recomplauncher.json"))
         dtk = os.path.join(ROOT, "build", "tools", "dtk.exe")
         if os.path.exists(dtk):
             os.makedirs(os.path.join(rel, "tools"))
