@@ -18,6 +18,9 @@ int hle_dvd_init(const char* root);
 void hle_dvd_boot_setup(void);
 void hle_text_boot_setup(void);
 void hle_nand_set_root(const char* root);
+#ifdef __ANDROID__
+void save_import_pending(void); /* save_import_android.c */
+#endif
 void hle_dump_threads(void);
 void input_init(void);
 void audio_init(void);
@@ -664,6 +667,9 @@ int main(int argc, char** argv) {
          * which keep their own). */
         strcpy(root + strlen(root) - 4, "nand");
         hle_nand_set_root(getenv("RECOMP_NAND") ? getenv("RECOMP_NAND") : root);
+#ifdef __ANDROID__
+        save_import_pending();
+#endif
     }
 #ifdef _WIN32
     {

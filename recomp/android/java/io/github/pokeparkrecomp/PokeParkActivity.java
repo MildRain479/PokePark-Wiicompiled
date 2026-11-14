@@ -49,12 +49,24 @@ public class PokeParkActivity extends NativeActivity {
     private static final int PICK = 1;
     private static final int PICK_FOLDER = 2;
     private static final int PICK_SAVE = 3;
+    private static final int PICK_EXPORT = 4;
     private static final String DISC = "disc";
     private static final String PHOTOS = "photos";
     private volatile int pickedFd = -1;
     private volatile int pickedFolder = -1;
     private volatile int pickedSave = -1;
+    /** This process asked for a save (chooseSave). */
+    private boolean askedSave;
+    /** The files chosen came to a game started again, not the one that
+     * asked: Android stopped that one (for its memory, say) while the
+     * picker was up, and started it again to give it the answer. */
+    private volatile boolean savePending;
     private final ArrayList<Uri> saveFiles = new ArrayList<>();
+    /** Where the save's zip goes: -2 while asking, then a file descriptor
+     * open for writing, or -1 (exportPending as savePending). */
+    private volatile int exportFd = -1;
+    private boolean askedExport;
+    private volatile boolean exportPending;
     private String asking;
 
     private SharedPreferences prefs() {
@@ -62,8 +74,12 @@ public class PokeParkActivity extends NativeActivity {
     }
 
     private int open(Uri uri) {
+        return open(uri, "r");
+    }
+
+    private int open(Uri uri, String mode) {
         try {
-            ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "r");
+            ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, mode);
             return pfd == null ? -1 : pfd.detachFd();
         } catch (Exception e) {
             Log.w("PokePark", "can't open " + uri, e);
@@ -342,10 +358,12 @@ public class PokeParkActivity extends NativeActivity {
     }
 
     /** Asks for a save to bring over: a Wii's data.bin, or the files of
-     * Dolphin's save folder, several at once (from native code;
-     * takeSaveCount answers). */
+     * Dolphin's save folder, several at once, or a zip of them (the
+     * picker can't choose a folder) (from native code; takeSaveCount
+     * answers). */
     public void chooseSave() {
         pickedSave = -1;
+        askedSave = true;
         runOnUiThread(() -> {
             Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             pick.addCategory(Intent.CATEGORY_OPENABLE);
@@ -366,11 +384,57 @@ public class PokeParkActivity extends NativeActivity {
         return pickedSave;
     }
 
+    /** Asks where to put the save's zip (from native code; takeExportFd
+     * answers). */
+    public void chooseExport() {
+        exportFd = -2;
+        askedExport = true;
+        runOnUiThread(() -> {
+            Intent pick = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            pick.addCategory(Intent.CATEGORY_OPENABLE);
+            pick.setType("application/zip");
+            pick.putExtra(Intent.EXTRA_TITLE, "PokePark Wii save.zip");
+            try {
+                startActivityForResult(pick, PICK_EXPORT);
+            } catch (Exception e) {
+                Log.w("PokePark", "no file picker", e);
+                exportFd = -1;
+            }
+        });
+    }
+
+    /** -2 while asking, then the file for the zip, open for writing, or -1
+     * (polled from native code). */
+    public int takeExportFd() {
+        return exportFd;
+    }
+
+    /** The file for a zip asked for by a game since stopped, once, -2 while
+     * it's being opened, or -1 (from native code, as the game starts:
+     * save_import_pending). */
+    public int takePendingExport() {
+        if (!exportPending) return -1;
+        if (exportFd == -2) return -2;
+        exportPending = false;
+        int fd = exportFd;
+        exportFd = -1;
+        return fd;
+    }
+
+    /** How many files were chosen for a game since stopped (savePending),
+     * once, or 0 (from native code, as the game starts, before it reads
+     * its saves: save_import_pending). */
+    public int takePendingSaves() {
+        if (!savePending) return 0;
+        savePending = false;
+        return saveFiles.size();
+    }
+
     /** The name of chosen file i (from native code). */
     public String saveName(int i) {
         try (Cursor c = getContentResolver().query(saveFiles.get(i),
                 new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (c != null && c.moveToFirst()) return c.getString(0);
+            if (c != null && c.moveToFirst() && c.getString(0) != null) return c.getString(0);
         } catch (Exception e) {
             Log.w("PokePark", "no name for " + saveFiles.get(i), e);
         }
@@ -382,12 +446,18 @@ public class PokeParkActivity extends NativeActivity {
         return open(saveFiles.get(i));
     }
 
-    /** Starts the game again, in a new process (from native code). */
+    /** Starts the game again, in a new process (from native code). On the
+     * UI thread, and the process killed outright: exit() from the calling
+     * thread ran the native libraries' teardown while the game waited on
+     * that thread, and the activity, going, waited on the game for its
+     * window, so it hung ("isn't responding") after an import. */
     public void restartGame() {
         Intent start = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (start == null) return;
-        startActivity(Intent.makeRestartActivityTask(start.getComponent()));
-        Runtime.getRuntime().exit(0);
+        runOnUiThread(() -> {
+            startActivity(Intent.makeRestartActivityTask(start.getComponent()));
+            android.os.Process.killProcess(android.os.Process.myPid());
+        });
     }
 
     @Override
@@ -402,6 +472,19 @@ public class PokeParkActivity extends NativeActivity {
                     saveFiles.add(data.getData());
             }
             pickedSave = saveFiles.size();
+            if (!askedSave && !saveFiles.isEmpty()) savePending = true;
+            return;
+        }
+        if (request == PICK_EXPORT) {
+            Uri uri = result == RESULT_OK && data != null ? data.getData() : null;
+            if (uri == null) {
+                exportFd = -1;
+                return;
+            }
+            exportFd = -2;
+            if (!askedExport) exportPending = true;
+            /* Opened on a thread of its own, as a cloud service's may be slow. */
+            new Thread(() -> exportFd = open(uri, "wt"), "open save export").start();
             return;
         }
         if (request == PICK_FOLDER) {

@@ -86,6 +86,18 @@ The game keeps its saves where a Wii does, in the same files, so a save
 from your Wii or from Dolphin carries on where you left off: friends,
 progress, attractions and photos.
 
+**In the game.** On the save files screen, open **Options > Gameplay**:
+
+- **Import Wii save** takes a Wii's `data.bin`, the files in Dolphin's
+  save folder, or a zip of them, puts the save in place of the game's own
+  (which is kept beside it as `data before import`) and starts the game
+  again.
+- **Export Wii save** writes your save as a zip of its files, the way
+  Dolphin keeps them. Import it on another phone or PC, or unzip it into
+  Dolphin's save folder (below).
+
+The steps below do the same by hand.
+
 **From a Wii.** A Wii copies saves to an SD card encrypted, so Dolphin
 (free, [dolphin-emu.org](https://dolphin-emu.org)) is used to unpack it:
 
@@ -118,8 +130,9 @@ progress, attractions and photos.
 4. Start the game; your save files are on the save files screen.
 
 Saves go the other way too: copy the game's `data` folder into Dolphin's,
-and on to a Wii by right-clicking the game in Dolphin's list and choosing
-**Export Wii Save**, which writes a `data.bin` to copy to the SD card.
+or unzip what **Export Wii save** writes there. On to a Wii from Dolphin,
+right-click the game in Dolphin's list and choose **Export Wii Save**,
+which writes a `data.bin` to copy to the SD card.
 
 ## Improvements over the Wii version
 

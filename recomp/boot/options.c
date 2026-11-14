@@ -65,7 +65,7 @@ static int sections(void) { return SECTIONS; }
  * controls, closing the game (selected twice, as unsaved progress is
  * lost), or bringing over a save from a Wii or Dolphin (only on the save
  * file screen, where nothing is lost by it). */
-enum { ROW_SETTING, ROW_BINDING, ROW_RESET, ROW_CLOSE, ROW_IMPORT };
+enum { ROW_SETTING, ROW_BINDING, ROW_RESET, ROW_CLOSE, ROW_IMPORT, ROW_EXPORT };
 typedef struct {
     int kind, which;
     const char* label;
@@ -120,7 +120,7 @@ static int import_shown(void);
 
 static int row_count(int sec) {
     return sec == SEC_DISPLAY    ? (int)(sizeof(kDisplay) / sizeof(kDisplay[0]))
-           : sec == SEC_GAMEPLAY ? GAMEPLAY_ROWS + import_shown()
+           : sec == SEC_GAMEPLAY ? GAMEPLAY_ROWS + 2 * import_shown()
            : sec == SEC_DUAL     ? (int)(sizeof(kDual) / sizeof(kDual[0]))
            : sec == SEC_KEYBOARD ? ACT_COUNT + 3 /* camera speed, invert, reset */
                                  : TOUCH_ROW + ACT_COUNT + 2; /* (touch controls,) rumble, reset */
@@ -132,6 +132,11 @@ static Row row_at(int sec, int i) {
     if (sec == SEC_GAMEPLAY && i == GAMEPLAY_ROWS) {
         r.kind = ROW_IMPORT;
         r.label = "Import Wii save";
+        return r;
+    }
+    if (sec == SEC_GAMEPLAY && i == GAMEPLAY_ROWS + 1) {
+        r.kind = ROW_EXPORT;
+        r.label = "Export Wii save";
         return r;
     }
     if (sec == SEC_GAMEPLAY) return kGameplay[i];
@@ -334,6 +339,36 @@ static void left_right(int d) {
     changed();
 }
 
+/* Bringing over a save (wii_save.h), which asks for it in the system's
+ * picker and restarts the game. */
+static int sImportWanted;
+
+/* Frames the page stays open for while what it was opened from is drawn
+ * again: the game, waiting on the picker, didn't draw it, and its time
+ * went on (hle_file_select_shown). */
+static int sGrace;
+
+/* Taking it out (wii_save.h): a zip of its files, where the player says. */
+static int sExportWanted;
+static const char* sExportResult;
+static unsigned sExportShown = ~0u;
+
+static void export_save(void) {
+    int res = save_export();
+    sGrace = 30;
+    changed();
+    sExportResult = res < 0 ? NULL : wiisave_export_message(res);
+    sExportShown = sChanges;
+}
+
+static void import_save(void) {
+    int res = save_import(); /* restarts the game once it's done */
+    sGrace = 30;
+    changed();
+    sImportResult = res < 0 ? NULL : res == WIISAVE_OK ? "Restart the game" : wiisave_message(res);
+    sImportShown = sChanges;
+}
+
 static void select_(void) {
     Row r;
     if (!sOnRows) {
@@ -348,10 +383,23 @@ static void select_(void) {
     } else if (r.kind == ROW_BINDING) {
         sCapture = sSection == SEC_CONTROLLER ? CAPTURE_PAD : CAPTURE_KEY;
     } else if (r.kind == ROW_IMPORT) {
-        int res = save_import(); /* restarts the game once it's done */
-        changed();
-        sImportResult = res < 0 ? NULL : res == WIISAVE_OK ? "Restart the game" : wiisave_message(res);
-        sImportShown = sChanges;
+#ifdef __ANDROID__
+        /* At the next pad read (options_controller): a touch gets here
+         * with input_android.c's lock held, and the activity's events
+         * thread, wanting it for the next touch, then couldn't let the
+         * window go for the picker, so the app hung ("isn't
+         * responding"). */
+        sImportWanted = 1;
+#else
+        import_save();
+#endif
+        return;
+    } else if (r.kind == ROW_EXPORT) {
+#ifdef __ANDROID__
+        sExportWanted = 1; /* (as the import, above) */
+#else
+        export_save();
+#endif
         return;
     } else if (r.kind == ROW_CLOSE) {
         if (close_armed()) exit(0); /* as closing the window does */
@@ -566,6 +614,9 @@ static void draw_book(void) {
         } else if (r.kind == ROW_IMPORT) {
             if (sImportResult && sImportShown == sChanges)
                 draw_text(sImportResult, 1190, my + 2, 34, ALIGN_CENTRE, WAIT, 0, 0, 1, 230);
+        } else if (r.kind == ROW_EXPORT) {
+            if (sExportResult && sExportShown == sChanges)
+                draw_text(sExportResult, 1190, my + 2, 34, ALIGN_CENTRE, WAIT, 0, 0, 1, 230);
         } else if (r.kind == ROW_BINDING) {
             int k;
             for (k = 0; k < BIND_SLOTS; k++) {
@@ -615,7 +666,9 @@ const uint32_t* options_draw(int w, int h) {
     static int drawnW, drawnH, drawnWhat, drawnUpdate, cw;
     int what = sOpen ? 2 : hle_pause_main_page() ? 1 : hle_file_select_shown() ? 3 : hle_password_screen_shown() ? 4 : 0;
     int y;
-    if (sOpen && !shown(sFrom)) { /* what it was opened from went (the scene changed) */
+    if (sOpen && shown(sFrom)) sGrace = 0;
+    else if (sOpen && sGrace > 0) sGrace--;
+    else if (sOpen) { /* what it was opened from went (the scene changed) */
         set_open(0);
         what = 0;
     }
@@ -824,6 +877,14 @@ void options_controller(uint32_t raw, uint32_t nav) {
     uint32_t pressed = raw & ~lastRaw, navPressed = nav & ~lastNav;
     lastRaw = raw;
     lastNav = nav;
+    if (sImportWanted) {
+        sImportWanted = 0;
+        import_save();
+    }
+    if (sExportWanted) {
+        sExportWanted = 0;
+        export_save();
+    }
     if (!sOpen) {
         if ((navPressed & XPAD_RIGHT) && hle_pause_main_page()) open_from(FROM_PAD);
         else if (pad_is(pressed, ACT_MINUS) && file_button_shown()) file_button();
