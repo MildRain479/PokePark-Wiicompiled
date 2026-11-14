@@ -345,26 +345,69 @@ static void draw_counts(float x0, float x1, float y) {
     }
 }
 
-/* The pages and their titles: what doesn't change while the zone
- * doesn't. */
-static void draw_pages(int area, int zone) {
-    char name[48];
+/* What of the pages is the same in every zone (the sky, the book, the
+ * map's title and its photo), kept for the screen's size. Drawn, a whole
+ * screen of it took 40 to 70 ms on a phone, all in one frame at every
+ * zone and every friend made; and the first time, the game's pictures for
+ * it decoded besides. Now drawn once, a step a frame (a picture each). */
+#define BOOK_STEPS 5
+static uint32_t* sBook;
+static int sBookW, sBookH, sBookStep;
+
+/* Book step k, into sPx; 0 if the picture for it isn't there yet. */
+static int book_step(int k) {
     static const Rect kWhole = {0, 0, 0, 0}, kLeaves = {1, 4, 63, 232};
+    static const char* const kPicture[3][2] = {
+        {"PmPocketbookR", "PmPocketbookRA"}, {"PmReaf01", "PmReaf01A"}, {"PmPocketbookL01", "PmPocketbookL01A"}};
     Rect l = left_page(), r = right_page(), m = map_rect();
-    int k;
-    sky(sPx, sW, sH);
-    picture("PmPocketbookR", "PmPocketbookRA", kWhole, r);
-    picture("PmReaf01", "PmReaf01A", kLeaves, part(r, 0.79f, 0.05f, 0.96f, 0.56f));
-    picture("PmPocketbookL01", "PmPocketbookL01A", kWhole, l);
-    draw_text("Map", (m.x0 + m.x1) / 2, r.y0 + 0.085f * REF_H, 54, ALIGN_CENTRE, BROWN, 0, 0, 1, 0);
-    /* The photo: its shadow, its border, and dark where the map goes. */
-    {
+    int w, h;
+    if (k >= 1 && k <= 3 && !hle_pause_image(kPicture[k - 1][0], kPicture[k - 1][1], &w, &h)) return 0;
+    if (k == 0) {
+        sky(sPx, sW, sH);
+    } else if (k == 1) {
+        picture(kPicture[0][0], kPicture[0][1], kWhole, r);
+    } else if (k == 2) {
+        picture(kPicture[1][0], kPicture[1][1], kLeaves, part(r, 0.79f, 0.05f, 0.96f, 0.56f));
+    } else if (k == 3) {
+        picture(kPicture[2][0], kPicture[2][1], kWhole, l);
+    } else {
+        /* The map's title; the photo: its shadow, its border, and dark
+         * where the map goes. */
         Rect shadow = {m.x0 - PHOTO_EDGE + 6, m.y0 - PHOTO_EDGE + 8, m.x1 + PHOTO_EDGE + 6, m.y1 + CAPTION + 8};
         Rect border = {m.x0 - PHOTO_EDGE, m.y0 - PHOTO_EDGE, m.x1 + PHOTO_EDGE, m.y1 + CAPTION};
+        draw_text("Map", (m.x0 + m.x1) / 2, r.y0 + 0.085f * REF_H, 54, ALIGN_CENTRE, BROWN, 0, 0, 1, 0);
         draw_box(shadow, 6, 0x50000000u | (EDGE & 0xFFFFFF));
         draw_box(border, 4, PHOTO);
         draw_box(m, 1, BEHIND);
     }
+    return 1;
+}
+
+/* Whether the book is ready for this size; if not, its next step drawn. */
+static int book_ready(void) {
+    if (!sBook || sBookW != sW || sBookH != sH) {
+        free(sBook);
+        sBook = (uint32_t*)malloc((size_t)sW * sH * 4);
+        if (!sBook) return 0;
+        sBookW = sW;
+        sBookH = sH;
+        sBookStep = 0;
+    }
+    if (sBookStep < BOOK_STEPS) {
+        uint32_t* page = sPx;
+        sPx = sBook;
+        sBookStep += book_step(sBookStep);
+        sPx = page;
+    }
+    return sBookStep == BOOK_STEPS;
+}
+
+/* The pages and their titles: what doesn't change while the zone
+ * doesn't. The book ready. */
+static void draw_pages(int area, int zone) {
+    char name[48];
+    Rect m = map_rect();
+    memcpy(sPx, sBook, (size_t)sW * sH * 4);
     if (place_name(area, zone, name, sizeof(name))[0])
         draw_text(name, (m.x0 + m.x1) / 2, m.y1 + CAPTION / 2 + 2, 46, ALIGN_CENTRE, BROWN, 0, 0, 1, m.x1 - m.x0);
     draw_counts(m.x0 - PHOTO_EDGE, m.x1 + PHOTO_EDGE, m.y1 + CAPTION);
@@ -410,6 +453,8 @@ const uint32_t* friends_draw(int w, int h, int* changed, int* map) {
     sH = h;
     sScale = h / REF_H;
     sOffX = sOffY = 0;
+    /* Nothing, until the book is ready. */
+    if (!book_ready()) return NULL;
     mr = map_rect();
     map[0] = (int)X(mr.x0);
     map[1] = (int)Y(mr.y0);

@@ -113,3 +113,6 @@
 0x802E4540 pfstub_fwrite_thunk  # hle_sd.c: fwrite
 0x80127390 nsDelhi::nsGlobal::FriendNoteSaveDataOne::mark_as_friend  # hle_autosave.c: a friend made
 0x801827C0 nsDelhi::nsGlobal::GlobalManager::syscall0x15  # hle_autosave.c: the Pad's save while an autosave is under way
+0x80195F70 fn_80195F70  # hle_lookup.c: resources by name, found natively (area loads)
+0x80196200 fn_80196200  # hle_lookup.c: the same, the other kind
+0x80196030 fn_80196030  # hle_lookup.c: resources by number, found natively
