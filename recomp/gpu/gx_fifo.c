@@ -890,6 +890,8 @@ static void build_state(GXDrawState* st) {
         for (i = 0; i < 8; i++) {
             st->tc_size[i][0] = (int)(bp[0x30 + 2 * i] & 0xFFFF) + 1;
             st->tc_size[i][1] = (int)(bp[0x31 + 2 * i] & 0xFFFF) + 1;
+            st->map_size[i][0] = (int)(bp[(i < 4 ? 0x88 : 0xA8 - 4) + i] & 0x3FF) + 1;
+            st->map_size[i][1] = (int)((bp[(i < 4 ? 0x88 : 0xA8 - 4) + i] >> 10) & 0x3FF) + 1;
         }
     }
     for (i = 0; i < st->num_stages; i++) {

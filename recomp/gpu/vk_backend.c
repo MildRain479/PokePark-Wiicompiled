@@ -2265,9 +2265,10 @@ static uint32_t write_tev(const GXDrawState* st) {
         }
         iw[120] = st->ind_stages;
         iw[121] = 1;
+        /* The coordinates' sizes, then the maps': width | height << 16. */
         for (i = 0; i < 8; i++) {
-            iw[128 + 2 * i] = st->tc_size[i][0];
-            iw[129 + 2 * i] = st->tc_size[i][1];
+            iw[128 + i] = st->tc_size[i][0] | st->tc_size[i][1] << 16;
+            iw[136 + i] = st->map_size[i][0] | st->map_size[i][1] << 16;
         }
     }
     for (i = 0; i < st->num_stages; i++) {
