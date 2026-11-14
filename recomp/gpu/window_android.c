@@ -420,6 +420,29 @@ static int java(struct android_app* app, const char* name, const char* arg) {
     return r;
 }
 
+/* Shown when this device's Vulkan can't run the game: before the disc
+ * image is asked for, rather than its being chosen and the game closing
+ * as it starts drawing. */
+static const char kNoVulkan[] =
+    "PokePark needs a GPU with Vulkan 1.3 and the features its renderer uses, and this device's doesn't have "
+    "them: %s.\n\nUpdating Android or the GPU's driver may add them.";
+
+/* Tells the player why the game can't go on (the activity's fatal()),
+ * and stops this thread: the player closes the game. */
+void android_fatal(const char* msg) {
+    JNIEnv* env;
+    JavaVM* vm = g_android_app->activity->vm;
+    fprintf(stderr, "PokePark: %s\n", msg);
+    if ((*vm)->AttachCurrentThread(vm, &env, NULL) == JNI_OK) {
+        jobject act = g_android_app->activity->clazz;
+        jclass cls = (*env)->GetObjectClass(env, act);
+        jstring s = (*env)->NewStringUTF(env, msg);
+        (*env)->CallVoidMethod(env, act, (*env)->GetMethodID(env, cls, "fatal", "(Ljava/lang/String;)V"), s);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
+    for (;;) pause();
+}
+
 /* Plays from the disc image in fd, or asks again, saying what's wrong. */
 static void use_image(struct android_app* app, int fd) {
     char err[512], msg[768];
@@ -438,7 +461,7 @@ static void use_image(struct android_app* app, int fd) {
 
 void android_main(struct android_app* app) {
     const char* shared = app->activity->externalDataPath;
-    char path[1024];
+    char path[1024], why[512], msg[1024];
     log_to_logcat();
     g_android_app = app;
     g_android_assets = app->activity->assetManager;
@@ -455,7 +478,12 @@ void android_main(struct android_app* app) {
         setenv("RECOMP_SHARED", shared, 1); /* for files written for test runs (boot.c's profile) */
         read_env(shared);
     }
-    if (shared && find_game(shared)) {
+    if (!vk_check(why, sizeof(why))) {
+        /* Nothing to ask for: the game couldn't draw. */
+        snprintf(msg, sizeof(msg), kNoVulkan, why);
+        fprintf(stderr, "PokePark: %s\n", msg);
+        java(app, "fatal", msg);
+    } else if (shared && find_game(shared)) {
         sHaveGame = 1;
         fprintf(stderr, "PokePark: %s\n", sDol);
     } else {

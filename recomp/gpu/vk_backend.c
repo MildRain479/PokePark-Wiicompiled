@@ -49,6 +49,11 @@ static int vk_unavailable(void) {
     return 0;
 }
 const GXDevice g_vk_device = {"Vulkan", vk_unavailable};
+int vk_check(char* why, size_t n) {
+    snprintf(why, n, "this build has no Vulkan");
+    return 0;
+}
+const char* vk_why(void) { return "this build has no Vulkan"; }
 
 #else
 
@@ -1584,10 +1589,28 @@ static void end_slot(int acquired, uint32_t image, int dump, int dw, int dh) {
 static uint32_t vk_texture(int pix, int width, int height, int levels, const uint8_t* pixels, uint32_t mode0);
 static void upload(VkCommandBuffer cb, Tex* t, int width, int height, int levels, const uint8_t* pixels);
 
+/* What's missing, for the player, when no GPU will do (pick_gpu). */
+static char sWhy[512];
+static int sCheckOnly; /* vk_check: no surface */
+const char* vk_why(void) { return sWhy; }
+
+/* Why a GPU won't do, in sWhy: its name and what it lacks. */
+static void lacks(const VkPhysicalDeviceProperties* p, const char* what) {
+    size_t at = strlen(sWhy);
+    snprintf(sWhy + at, sizeof(sWhy) - at, "%s%s (Vulkan %u.%u.%u) has no %s", at ? "; " : "", p->deviceName,
+             VK_API_VERSION_MAJOR(p->apiVersion), VK_API_VERSION_MINOR(p->apiVersion),
+             VK_API_VERSION_PATCH(p->apiVersion), what);
+    fprintf(stderr, "vulkan: %s\n", sWhy + at + (at ? 2 : 0));
+}
+
+/* The GPU to draw with, of those with Vulkan 1.3 and the features the
+ * renderer uses; with no surface yet (vk_check), any that draws. */
 static int pick_gpu(void) {
     VkPhysicalDevice gpus[16];
     uint32_t n = 16, i, best = ~0u, bestScore = 0;
-    vkEnumeratePhysicalDevices(sInstance, &n, gpus);
+    sWhy[0] = 0;
+    if (vkEnumeratePhysicalDevices(sInstance, &n, gpus) < 0) n = 0;
+    if (!n) snprintf(sWhy, sizeof(sWhy), "no GPU was found");
     for (i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
         VkQueueFamilyProperties qf[32];
@@ -1597,21 +1620,35 @@ static int pick_gpu(void) {
         VkPhysicalDeviceFeatures2 f = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         uint32_t score;
         vkGetPhysicalDeviceProperties(gpus[i], &p);
-        if (p.apiVersion < VK_API_VERSION_1_3) continue;
+        if (p.apiVersion < VK_API_VERSION_1_3) {
+            lacks(&p, "Vulkan 1.3");
+            continue;
+        }
         f.pNext = &f12;
         f12.pNext = &f13;
         vkGetPhysicalDeviceFeatures2(gpus[i], &f);
         if (!f13.dynamicRendering || !f13.synchronization2 || !f13.shaderDemoteToHelperInvocation ||
             !f12.descriptorBindingPartiallyBound ||
-            !f12.descriptorBindingSampledImageUpdateAfterBind || !f12.descriptorBindingUpdateUnusedWhilePending)
+            !f12.descriptorBindingSampledImageUpdateAfterBind || !f12.descriptorBindingUpdateUnusedWhilePending) {
+            lacks(&p, !f13.dynamicRendering                                ? "dynamicRendering"
+                      : !f13.synchronization2                              ? "synchronization2"
+                      : !f13.shaderDemoteToHelperInvocation                ? "shaderDemoteToHelperInvocation"
+                      : !f12.descriptorBindingPartiallyBound               ? "descriptorBindingPartiallyBound"
+                      : !f12.descriptorBindingSampledImageUpdateAfterBind ? "descriptorBindingSampledImageUpdateAfterBind"
+                                                                          : "descriptorBindingUpdateUnusedWhilePending");
             continue;
+        }
         vkGetPhysicalDeviceQueueFamilyProperties(gpus[i], &nq, qf);
         for (q = 0; q < nq; q++) {
             VkBool32 present = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(gpus[i], q, sSurface, &present);
+            if (!sSurface) present = VK_TRUE;
+            else vkGetPhysicalDeviceSurfaceSupportKHR(gpus[i], q, sSurface, &present);
             if ((qf[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) break;
         }
-        if (q == nq) continue;
+        if (q == nq) {
+            lacks(&p, sSurface ? "queue that draws to the screen" : "graphics queue");
+            continue;
+        }
         score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
         if (best == ~0u || score > bestScore) {
             best = i;
@@ -1676,6 +1713,7 @@ static int make_instance(void) {
     VkInstanceCreateInfo ci = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     if (!lib) {
         fprintf(stderr, "vulkan: no Vulkan library\n");
+        snprintf(sWhy, sizeof(sWhy), "this device has no Vulkan");
         return 0;
     }
     vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)(void*)LIB_SYMBOL(lib, "vkGetInstanceProcAddr");
@@ -1695,6 +1733,7 @@ static int make_instance(void) {
     if (vkCreateInstance(&ci, NULL, &sInstance) != VK_SUCCESS) {
         if (!validate) {
             fprintf(stderr, "vulkan: no instance\n");
+            snprintf(sWhy, sizeof(sWhy), "this device's Vulkan is older than 1.3");
             return 0;
         }
         fprintf(stderr, "vulkan: no validation layers; without them\n");
@@ -1722,7 +1761,24 @@ static int make_instance(void) {
         if (create) create(sInstance, &di, NULL, &m);
         fprintf(stderr, "vulkan: validation layers on\n");
     }
-    return make_surface();
+    return sCheckOnly || make_surface();
+}
+
+/* Whether a GPU here has what the game needs, before there's a window to
+ * draw in: an instance made, a GPU picked, and the instance let go. */
+int vk_check(char* why, size_t n) {
+    int ok;
+    sCheckOnly = 1;
+    ok = make_instance() && pick_gpu();
+    sCheckOnly = 0;
+    if (sInstance) {
+        PFN_vkDestroyInstance destroy =
+            (PFN_vkDestroyInstance)(void*)vkGetInstanceProcAddr(sInstance, "vkDestroyInstance");
+        if (destroy) destroy(sInstance, NULL);
+        sInstance = VK_NULL_HANDLE;
+    }
+    snprintf(why, n, "%s", ok ? "" : sWhy[0] ? sWhy : "Vulkan couldn't be started");
+    return ok;
 }
 
 static int make_device(void) {

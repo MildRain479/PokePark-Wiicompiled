@@ -10,6 +10,7 @@
  * tried. */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "gx.h"
@@ -96,6 +97,18 @@ void gx_canvas_rect(int mx, int my, int* x, int* y, int* w, int* h);
  * comes nearest the window, rounding up unless within a quarter step
  * (gx_frames.c). */
 int gx_wanted_scale(int h);
+
+/* Whether this device's Vulkan can run the game, with no window yet
+ * (vk_backend.c): 1, or 0 with what's missing in why, for the player. */
+int vk_check(char* why, size_t n);
+/* What vk_backend.c last found missing, for the player ("" if nothing). */
+const char* vk_why(void);
+
+#ifdef __ANDROID__
+/* Tells the player why the game can't go on, and waits for them to close
+ * it (window_android.c); from any thread. Doesn't return. */
+void android_fatal(const char* msg);
+#endif
 
 /* Window (window_win32.c). */
 /* Makes the game's window, shown unless RECOMP_GX_HIDDEN=1, sized for the

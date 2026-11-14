@@ -596,8 +596,11 @@ void gxb_init(void) {
     (void)v;
     sDev = &g_vk_device;
     if (!sDev->init()) {
+        char msg[768];
         fprintf(stderr, "gpu: no Vulkan 1.3 with what the game needs\n");
-        exit(1);
+        snprintf(msg, sizeof(msg), "PokePark couldn't start drawing on this device: %s.",
+                 vk_why()[0] ? vk_why() : "Vulkan couldn't be started");
+        android_fatal(msg);
     }
 #else
     if (v && *v) sDev = strcmp(v, "vulkan") == 0 ? &g_vk_device : &g_gl_device;

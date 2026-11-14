@@ -365,6 +365,23 @@ public class PokeParkActivity extends NativeActivity {
         });
     }
 
+    /** Says why the game can't go on, with only a way to close it (from
+     * native code, any thread). */
+    public void fatal(final String message) {
+        runOnUiThread(() -> {
+            hideSecondScreen();
+            new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("PokePark")
+                .setMessage(message)
+                .setCancelable(false)
+                .setPositiveButton("Close", (d, w) -> {
+                    finishAndRemoveTask();
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                })
+                .show();
+        });
+    }
+
     /** Asks for the disc image, saying message (from native code). */
     public void chooseGame(final String message) {
         runOnUiThread(new Runnable() {
