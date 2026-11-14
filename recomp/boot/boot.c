@@ -420,6 +420,43 @@ static int find_game(char* out, size_t n) {
     return 0;
 }
 
+#ifdef _WIN32
+/* For a launcher such as RecompLauncher, which has the player's disc image
+ * already: "--game <disc image>" sets the game up from it, with no window,
+ * if it isn't set up yet, and "--prepare" does only that, printing
+ * "progress <0-1> <text>" lines, and exits (0 if it worked). Without them
+ * nothing here runs. They are taken out of argv, so the rest of main sees
+ * what it always did. */
+int import_image(const char* image, int progress, char* mainDol, size_t n, char* why, size_t whyN); /* import_win32.c */
+
+static void launcher_args(int* argc, char** argv, const char** image, int* prepare) {
+    int i, kept = 1;
+    for (i = 1; i < *argc; i++) {
+        if (!strcmp(argv[i], "--prepare")) {
+            *prepare = 1;
+        } else if (!strcmp(argv[i], "--game") && i + 1 < *argc) {
+            *image = argv[++i];
+        } else {
+            argv[kept++] = argv[i];
+        }
+    }
+    argv[kept] = NULL;
+    *argc = kept;
+}
+
+static int set_up_from_image(const char* image, int prepare, char* mainDol, size_t n) {
+    char why[512];
+    if (!image) {
+        fprintf(stderr, "--prepare needs --game <disc image>\n");
+        return 0;
+    }
+    if (import_image(image, prepare, mainDol, n, why, sizeof(why))) return 1;
+    fprintf(stderr, "%s\n", why);
+    if (!prepare) MessageBoxA(NULL, why, "PokePark", MB_ICONERROR);
+    return 0;
+}
+#endif
+
 #ifdef __ANDROID__
 int disc_image_active(void); /* disc_image_android.c */
 const uint8_t* disc_image_dol(size_t* len);
@@ -565,6 +602,11 @@ int main(int argc, char** argv) {
     static char found[1024];
     static char* defaultArgs[2];
 #ifdef _WIN32
+    const char* image = NULL;
+    int prepare = 0;
+    launcher_args(&argc, argv, &image, &prepare);
+    if (prepare) return set_up_from_image(image, 1, found, sizeof(found)) ? 0 : 1;
+    if (image && !find_game(found, sizeof(found)) && !set_up_from_image(image, 0, found, sizeof(found))) return 2;
     /* Not set up yet: the player's disc image, extracted beside the
      * program (import_win32.c). */
     if (argc < 2 && !find_game(found, sizeof(found)) && !import_game(found, sizeof(found))) return 0;

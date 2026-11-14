@@ -5,7 +5,10 @@
  * main.dol in R8AE01\sys. The extracting is done by decomp-toolkit
  * (tools\dtk.exe beside the program, "dtk disc extract"), which reads all
  * those formats; the disc must be PokePark Wii's (USA), R8AE01, checked
- * before it is extracted and its main.dol after (disc_verify.h). */
+ * before it is extracted and its main.dol after (disc_verify.h).
+ *
+ * A launcher that already has the player's copy can do the same with no
+ * window: import_image, behind boot.c's --game and --prepare. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commdlg.h>
@@ -27,8 +30,30 @@ static HWND sText, sChoose, sQuit;
 static HFONT sFont;
 static char sDir[MAX_PATH]; /* the program's folder */
 static int sDone;           /* 1 set up, -1 quit */
+static int sQuiet;          /* no window (import_image): nobody to ask */
+static int sProgress;       /* print "progress <0-1> <text>" lines, for a launcher's setup step */
 
-static void set_text(const char* s) { SetWindowTextA(sText, s); }
+static void set_text(const char* s) {
+    if (sText) SetWindowTextA(sText, s);
+}
+
+/* Where setting up has got to: the window says window (if any), a launcher
+ * reading our output gets plain. */
+static void step(double done, const char* window, const char* plain) {
+    if (sProgress) {
+        printf("progress %.2f %s\n", done, plain);
+        fflush(stdout);
+    }
+    if (window) set_text(window);
+}
+
+/* sDir, the program's folder. */
+static int find_dir(void) {
+    char* slash;
+    if (!GetModuleFileNameA(NULL, sDir, sizeof(sDir))) return 0;
+    if ((slash = strrchr(sDir, '\\')) != NULL) *slash = '\0';
+    return 1;
+}
 
 /* Deletes a folder and everything in it. */
 static void remove_tree(const char* path) {
@@ -132,9 +157,11 @@ static int check_image(HWND w, const char* image, char* why, size_t n) {
         return 0;
     }
     if (disc_check_info(out, why, n) != DISC_OK) return 0;
-    set_text("Checking your disc image...\r\nThis takes up to a minute.");
+    step(0.1, "Checking your disc image...\r\nThis takes up to a minute.", "Checking the disc image is complete");
     run_dtk("verify", image, out, sizeof(out));
     if (disc_is_original(out)) return 1;
+    /* Nobody to ask: the launcher has read the whole copy already. */
+    if (sQuiet) return 1;
     return MessageBoxA(w,
                        "This disc image isn't an exact copy of the original disc.\n\n"
                        "WBFS and scrubbed copies leave out the disc's padding, and those play normally. A modded or "
@@ -172,11 +199,52 @@ static int is_game(const char* dir) {
     return ok;
 }
 
-static void import(HWND w) {
-    char image[MAX_PATH] = "", game[MAX_PATH], disc[MAX_PATH], sys[MAX_PATH], from[MAX_PATH], to[MAX_PATH];
-    char why[512];
-    OPENFILENAMEA ofn;
+/* Checks image and sets the game up from it: 1 if it is, else why says
+ * what's wrong (empty if the player chose not to go on). */
+static int set_up(HWND w, const char* image, char* why, size_t n) {
+    char game[MAX_PATH], disc[MAX_PATH], sys[MAX_PATH], from[MAX_PATH], to[MAX_PATH];
     int code;
+    step(0.02, "Checking your disc image...", "Reading the disc image");
+    if (!check_image(w, image, why, n)) return 0;
+    snprintf(game, sizeof(game), "%s\\R8AE01", sDir);
+    snprintf(disc, sizeof(disc), "%s\\disc", game);
+    snprintf(sys, sizeof(sys), "%s\\sys", game);
+    remove_tree(disc); /* what an earlier try left */
+    CreateDirectoryA(game, NULL);
+    step(0.3, "Setting the game up from your disc image...\r\nThis takes a minute or two.",
+         "Setting the game up from the disc image");
+    code = extract(image, disc);
+    if (code != 0 || !is_game(disc)) {
+        remove_tree(disc);
+        snprintf(why, n, "%s",
+                 code == -1 ? "Couldn't start tools\\dtk.exe, which reads disc images: it should be in the "
+                              "tools folder beside PokePark.exe."
+                 : code != 0 ? "That file couldn't be read as a disc image. Choose a PokePark Wii disc image "
+                               "(ISO, RVZ, WBFS...)."
+                             : "That disc isn't PokePark Wii: Pikachu's Adventure (USA, R8AE01). Choose that "
+                               "game's disc image.");
+        return 0;
+    }
+    /* main.dol where the game is looked for, as in the source tree. */
+    step(0.9, NULL, "Checking the game's code");
+    CreateDirectoryA(sys, NULL);
+    snprintf(from, sizeof(from), "%s\\sys\\main.dol", disc);
+    if (!check_dol(from, why, n)) {
+        remove_tree(disc);
+        return 0;
+    }
+    snprintf(to, sizeof(to), "%s\\main.dol", sys);
+    if (!CopyFileA(from, to, FALSE)) {
+        snprintf(why, n, "The disc image was read, but main.dol couldn't be copied. Is the folder read-only?");
+        return 0;
+    }
+    step(1, NULL, "The game is set up");
+    return 1;
+}
+
+static void import(HWND w) {
+    char image[MAX_PATH] = "", why[512];
+    OPENFILENAMEA ofn;
     memset(&ofn, 0, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = w;
@@ -188,47 +256,27 @@ static void import(HWND w) {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
     if (!GetOpenFileNameA(&ofn)) return;
     EnableWindow(sChoose, FALSE);
-    set_text("Checking your disc image...");
-    if (!check_image(w, image, why, sizeof(why))) {
-        EnableWindow(sChoose, TRUE);
-        set_text(why[0] ? why : "Choose your copy of the game, a disc image of PokePark Wii: Pikachu's Adventure "
-                                "(USA): an ISO, RVZ, WBFS or the like.");
+    if (set_up(w, image, why, sizeof(why))) {
+        sDone = 1;
         return;
     }
-    snprintf(game, sizeof(game), "%s\\R8AE01", sDir);
-    snprintf(disc, sizeof(disc), "%s\\disc", game);
-    snprintf(sys, sizeof(sys), "%s\\sys", game);
-    remove_tree(disc); /* what an earlier try left */
-    CreateDirectoryA(game, NULL);
-    set_text("Setting the game up from your disc image...\r\nThis takes a minute or two.");
-    code = extract(image, disc);
-    if (code != 0 || !is_game(disc)) {
-        remove_tree(disc);
-        EnableWindow(sChoose, TRUE);
-        set_text(code == -1 ? "Couldn't start tools\\dtk.exe, which reads disc images: it should be in the "
-                              "tools folder beside PokePark.exe."
-                 : code != 0 ? "That file couldn't be read as a disc image. Choose a PokePark Wii disc image "
-                               "(ISO, RVZ, WBFS...)."
-                             : "That disc isn't PokePark Wii: Pikachu's Adventure (USA, R8AE01). Choose that "
-                               "game's disc image.");
-        return;
+    EnableWindow(sChoose, TRUE);
+    set_text(why[0] ? why : "Choose your copy of the game, a disc image of PokePark Wii: Pikachu's Adventure "
+                            "(USA): an ISO, RVZ, WBFS or the like.");
+}
+
+/* For a launcher (boot.c's --game and --prepare): the same set-up from
+ * image, with no window. On failure why says what's wrong. */
+int import_image(const char* image, int progress, char* mainDol, size_t n, char* why, size_t whyN) {
+    sQuiet = 1;
+    sProgress = progress;
+    if (!find_dir()) {
+        snprintf(why, whyN, "Couldn't find the program's folder.");
+        return 0;
     }
-    /* main.dol where the game is looked for, as in the source tree. */
-    CreateDirectoryA(sys, NULL);
-    snprintf(from, sizeof(from), "%s\\sys\\main.dol", disc);
-    if (!check_dol(from, why, sizeof(why))) {
-        remove_tree(disc);
-        EnableWindow(sChoose, TRUE);
-        set_text(why);
-        return;
-    }
-    snprintf(to, sizeof(to), "%s\\main.dol", sys);
-    if (!CopyFileA(from, to, FALSE)) {
-        EnableWindow(sChoose, TRUE);
-        set_text("The disc image was read, but main.dol couldn't be copied. Is the folder read-only?");
-        return;
-    }
-    sDone = 1;
+    if (!set_up(NULL, image, why, whyN)) return 0;
+    snprintf(mainDol, n, "%s\\R8AE01\\sys\\main.dol", sDir);
+    return 1;
 }
 
 static LRESULT CALLBACK proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
@@ -248,11 +296,9 @@ int import_game(char* mainDol, size_t n) {
     HWND w;
     RECT r = {0, 0, 480, 190};
     NONCLIENTMETRICSA ncm;
-    char* slash;
     MSG m;
     int dpi;
-    if (!GetModuleFileNameA(NULL, sDir, sizeof(sDir))) return 0;
-    if ((slash = strrchr(sDir, '\\')) != NULL) *slash = '\0';
+    if (!find_dir()) return 0;
     SetProcessDPIAware();
     dpi = GetDeviceCaps(GetDC(NULL), LOGPIXELSY);
     r.right = MulDiv(r.right, dpi, 96);
