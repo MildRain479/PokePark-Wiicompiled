@@ -1,5 +1,6 @@
 package io.github.pokeparkrecomp;
 
+import android.app.ActivityOptions;
 import android.app.AlertDialog;
 import android.app.NativeActivity;
 import android.app.Presentation;
@@ -10,6 +11,7 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.display.DisplayManager;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
@@ -22,6 +24,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.WindowManager;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -140,6 +143,10 @@ public class PokeParkActivity extends NativeActivity {
 
     private Presentation second;
     private DisplayManager.DisplayListener displays;
+    /** The second screen is on in the settings (native code asked for it). */
+    private boolean secondWanted;
+    /** The game is on screen (between onStart and onStop). */
+    private boolean visible;
 
     /** Whether a display is built in (not HDMI, wireless or virtual):
      * Display.getType, hidden, is TYPE_INTERNAL (1). Unknown is not. */
@@ -177,17 +184,42 @@ public class PokeParkActivity extends NativeActivity {
     }
 
     /** The second screen to show on, of those apps can present on: a
-     * built-in one, or else a touch screen plugged in. */
+     * built-in one, or else a touch screen plugged in. Not the one the game
+     * itself is on. */
     private Display secondDisplay() {
         DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
         Display[] all = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+        Display mine = getDisplay();
+        int own = mine == null ? Display.DEFAULT_DISPLAY : mine.getDisplayId();
         for (Display d : all) {
-            if (builtIn(d)) return d;
+            if (d.getDisplayId() != own && builtIn(d)) return d;
         }
         for (Display d : all) {
-            if (touchScreenPluggedIn(d)) return d;
+            if (d.getDisplayId() != own && touchScreenPluggedIn(d)) return d;
         }
         return null;
+    }
+
+    private static final String MOVED = "moved";
+
+    /** Started on a handheld's lower screen (the AYN Thor's own launcher
+     * there, or its app switcher), the game goes to the main one, leaving
+     * the lower one for the second screen: started again there, in a new
+     * process, as restartGame does, before NativeActivity starts the
+     * game. Once only, should it not get there. */
+    @Override
+    protected void onCreate(Bundle state) {
+        Display mine = getDisplay();
+        if (mine != null && mine.getDisplayId() != Display.DEFAULT_DISPLAY && builtIn(mine)
+                && !getIntent().getBooleanExtra(MOVED, false)) {
+            Intent start = Intent.makeRestartActivityTask(getComponentName()).putExtra(MOVED, true);
+            ActivityOptions to = ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY);
+            Log.i("PokePark", "started on display " + mine.getDisplayId() + ": moving to the main one");
+            startActivity(start, to.toBundle());
+            android.os.Process.killProcess(android.os.Process.myPid());
+            return;
+        }
+        super.onCreate(state);
     }
 
     private boolean dual() {
@@ -228,58 +260,97 @@ public class PokeParkActivity extends NativeActivity {
     }
 
     /** Opens a window on a second screen, if there is one (from native
-     * code, once its methods above are registered). */
+     * code, once its methods above are registered). It's there while the
+     * game is: closed when it's left (Home, or another app opened over it)
+     * and opened again on coming back. */
     public void showSecondScreen() {
         runOnUiThread(() -> {
-            if (second != null) return;
-            Display display = secondDisplay();
-            if (display == null) return;
-            second = new Presentation(this, display);
-            SurfaceView view = new SurfaceView(second.getContext());
-            view.getHolder().addCallback(new SurfaceHolder.Callback() {
-                public void surfaceCreated(SurfaceHolder h) {}
-                public void surfaceChanged(SurfaceHolder h, int format, int w, int hgt) {
-                    secondSurface(h.getSurface(), w, hgt);
-                }
-                public void surfaceDestroyed(SurfaceHolder h) {
-                    secondSurface(null, 0, 0);
-                }
-            });
-            view.setOnTouchListener((v, e) -> {
-                int a = e.getActionMasked(), p = e.getActionIndex();
-                if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_POINTER_DOWN) {
-                    secondTouch(0, e.getPointerId(p), e.getX(p), e.getY(p));
-                } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_POINTER_UP) {
-                    secondTouch(1, e.getPointerId(p), e.getX(p), e.getY(p));
-                } else if (a == MotionEvent.ACTION_MOVE || a == MotionEvent.ACTION_CANCEL) {
-                    for (int i = 0; i < e.getPointerCount(); i++)
-                        secondTouch(a == MotionEvent.ACTION_MOVE ? 2 : 1, e.getPointerId(i), e.getX(i), e.getY(i));
-                }
-                return true;
-            });
-            second.setContentView(view);
-            try {
-                second.show();
-            } catch (Exception e) {
-                Log.w("PokePark", "no second screen: " + e);
-                second = null;
+            secondWanted = true;
+            openSecond();
+        });
+    }
+
+    private void openSecond() {
+        if (second != null || !visible || !secondWanted) return;
+        Display display = secondDisplay();
+        if (display == null) return;
+        second = new Presentation(this, display);
+        SurfaceView view = new SurfaceView(second.getContext());
+        view.getHolder().addCallback(new SurfaceHolder.Callback() {
+            public void surfaceCreated(SurfaceHolder h) {}
+            public void surfaceChanged(SurfaceHolder h, int format, int w, int hgt) {
+                secondSurface(h.getSurface(), w, hgt);
+            }
+            public void surfaceDestroyed(SurfaceHolder h) {
+                secondSurface(null, 0, 0);
             }
         });
+        view.setOnTouchListener((v, e) -> {
+            int a = e.getActionMasked(), p = e.getActionIndex();
+            if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_POINTER_DOWN) {
+                secondTouch(0, e.getPointerId(p), e.getX(p), e.getY(p));
+            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_POINTER_UP) {
+                secondTouch(1, e.getPointerId(p), e.getX(p), e.getY(p));
+            } else if (a == MotionEvent.ACTION_MOVE || a == MotionEvent.ACTION_CANCEL) {
+                for (int i = 0; i < e.getPointerCount(); i++)
+                    secondTouch(a == MotionEvent.ACTION_MOVE ? 2 : 1, e.getPointerId(i), e.getX(i), e.getY(i));
+            }
+            return true;
+        });
+        second.setContentView(view);
+        /* Never focused: touched, it would take the keys, the controller's
+         * among them, from the game on the main screen (with the AYN Thor's
+         * focus lock on, it kept them until the main screen was touched). */
+        /* Not closed by Back pressed on it; and should something else
+         * close it, it opens again. */
+        second.setCancelable(false);
+        final Presentation mine = second;
+        second.setOnDismissListener(d -> {
+            if (second != mine) return; /* ours, on purpose */
+            second = null;
+            new Handler(Looper.getMainLooper()).postDelayed(this::openSecond, 500);
+        });
+        try {
+            second.show();
+            second.getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        } catch (Exception e) {
+            Log.w("PokePark", "no second screen: " + e);
+            second = null;
+        }
+    }
+
+    private void closeSecond() {
+        Presentation p = second;
+        second = null;
+        if (p != null) p.dismiss();
     }
 
     /** Closes the second screen's window, if open (from native code). */
     public void hideSecondScreen() {
         runOnUiThread(() -> {
-            if (second != null) second.dismiss();
-            second = null;
+            secondWanted = false;
+            closeSecond();
         });
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+        openSecond();
+    }
+
+    @Override
+    protected void onStop() {
+        visible = false;
+        closeSecond();
+        super.onStop();
     }
 
     @Override
     protected void onDestroy() {
         if (displays != null) ((DisplayManager) getSystemService(Context.DISPLAY_SERVICE)).unregisterDisplayListener(displays);
-        if (second != null) second.dismiss();
-        second = null;
+        closeSecond();
         super.onDestroy();
     }
 
