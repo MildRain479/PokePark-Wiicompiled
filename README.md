@@ -1,5 +1,7 @@
 # PokePark Wiicompiled
 
+<a href="https://recomplauncher.com/game/pokepark-wiicompiled"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 A native Windows and Android port of *PokePark Wii: Pikachu's Adventure*
 (USA, R8AE01).
 The game's PowerPC code is statically recompiled into C and runs natively,
