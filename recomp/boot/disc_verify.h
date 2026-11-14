@@ -23,8 +23,20 @@ typedef enum {
     DISC_WRONG_GAME,     /* another game */
     DISC_WRONG_REGION,   /* PokePark Wii, not the USA release */
     DISC_WRONG_REVISION, /* USA, not Rev 0 */
-    DISC_WRONG_CODE      /* R8AE01 Rev 0 by its header, another main.dol */
+    DISC_WRONG_CODE,     /* R8AE01 Rev 0 by its header, another main.dol */
+    DISC_INCOMPLETE,     /* copied or downloaded part way */
+    DISC_NKIT            /* an NKit ISO, its data moved about */
 } disc_result;
+
+/* Reads len bytes of the image file at offset: 1 if they were all read. */
+typedef int (*disc_read_fn)(void* user, uint64_t offset, void* out, size_t len);
+
+/* The image file itself, size bytes, before it is read as a disc: an RVZ
+ * or WIA, or a plain ISO, shorter than it says it is (it opens like a
+ * whole one, its header being at the start, and the game's reads past
+ * where it stops fail), or an NKit ISO (.nkit.iso), which neither nod nor
+ * dtk reads right. Other formats check their own size as they open. */
+disc_result disc_check_file(disc_read_fn read, void* user, uint64_t size, char* msg, size_t n);
 
 /* R8AE01 Rev 0 on Redump, and its main.dol. */
 #define DISC_REDUMP_SHA1 "c9a6f7601fd54b5e21a0909084839d30874a9a37"

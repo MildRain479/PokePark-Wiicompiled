@@ -4,6 +4,7 @@
 //
 // Usage: test_recomp <path to main.dol>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -260,6 +261,57 @@ static void test_disc() {
     disc_sha1(zeros, sizeof(zeros), sha1);
     check(!strcmp(sha1, "b110a88a11436b215220486c1081dec2fb0f389a"), "disc", "sha1(120 zeros) = %s", sha1);
     check(disc_check_dol(zeros, sizeof(zeros), msg, sizeof(msg)) == DISC_WRONG_CODE, "disc", "another main.dol");
+}
+
+// An image file's start, in memory: past its end, zeros, as a file read
+// sparsely; how big the file is is said separately.
+static uint8_t sImage[0x50400];
+
+static int image_read(void*, uint64_t offset, void* out, size_t len) {
+    memset(out, 0, len);
+    if (offset < sizeof(sImage)) memcpy(out, sImage + offset, std::min<size_t>(len, sizeof(sImage) - (size_t)offset));
+    return 1;
+}
+
+static void put_be32(uint32_t at, uint32_t v) {
+    sImage[at] = (uint8_t)(v >> 24);
+    sImage[at + 1] = (uint8_t)(v >> 16);
+    sImage[at + 2] = (uint8_t)(v >> 8);
+    sImage[at + 3] = (uint8_t)v;
+}
+
+static void test_disc_file() {
+    char msg[512];
+    // A Wii ISO: its data partition at 0x50000, the data 0x20000 into it,
+    // 0x100000 long, so ending at 0x170000. The update partition (type 1)
+    // listed first, which isn't the one.
+    memset(sImage, 0, sizeof(sImage));
+    memcpy(sImage, "R8AE01", 6);
+    put_be32(0x18, 0x5D1C9EA3);
+    put_be32(0x40000, 2);
+    put_be32(0x40004, 0x40020 >> 2);
+    put_be32(0x40020, 0x48000 >> 2);
+    put_be32(0x40024, 1);
+    put_be32(0x40028, 0x50000 >> 2);
+    put_be32(0x4002C, 0);
+    put_be32(0x502B8, 0x20000 >> 2);
+    put_be32(0x502BC, 0x100000 >> 2);
+    check(disc_check_file(image_read, NULL, 0x170000, msg, sizeof(msg)) == DISC_OK, "disc file", "whole ISO: %s", msg);
+    check(disc_check_file(image_read, NULL, 0x200000, msg, sizeof(msg)) == DISC_OK, "disc file", "ISO with padding");
+    check(disc_check_file(image_read, NULL, 0x16FFFF, msg, sizeof(msg)) == DISC_INCOMPLETE, "disc file", "ISO cut short");
+    memcpy(sImage + 0x200, "NKIT", 4);
+    check(disc_check_file(image_read, NULL, 0x170000, msg, sizeof(msg)) == DISC_NKIT, "disc file", "NKit ISO");
+    // An RVZ: its file size at 0x2C.
+    memset(sImage, 0, sizeof(sImage));
+    memcpy(sImage, "RVZ\1", 4);
+    put_be32(0x2C, 0);
+    put_be32(0x30, 0x59000000);
+    check(disc_check_file(image_read, NULL, 0x59000000, msg, sizeof(msg)) == DISC_OK, "disc file", "whole RVZ");
+    check(disc_check_file(image_read, NULL, 0x100000, msg, sizeof(msg)) == DISC_INCOMPLETE, "disc file", "RVZ cut short");
+    // Something else: the reader's to judge.
+    memset(sImage, 0, sizeof(sImage));
+    memcpy(sImage, "WBFS", 4);
+    check(disc_check_file(image_read, NULL, 0x100000, msg, sizeof(msg)) == DISC_OK, "disc file", "WBFS passed on");
 }
 
 static void test_hook() {
@@ -624,6 +676,7 @@ int main(int argc, char** argv) {
     test_strings();
     test_sprintf();
     test_disc();
+    test_disc_file();
     test_hook();
     test_math();
     test_sd();

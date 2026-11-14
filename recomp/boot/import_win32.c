@@ -121,11 +121,31 @@ static int run_dtk(const char* args, const char* image, char* out, size_t cap) {
     return (int)code;
 }
 
+/* The image file's bytes, for disc_check_file. */
+static int file_read(void* user, uint64_t offset, void* out, size_t len) {
+    FILE* f = (FILE*)user;
+    return _fseeki64(f, (long long)offset, SEEK_SET) == 0 && fread(out, 1, len, f) == len;
+}
+
+/* Copied part way, or an NKit ISO (disc_verify.h): dtk extracts an ISO
+ * cut short as if it were whole, the files past the cut left empty. */
+static int check_file(const char* image, char* why, size_t n) {
+    FILE* f = fopen(image, "rb");
+    long long size;
+    disc_result r = DISC_OK;
+    if (!f) return 1; /* dtk says why */
+    if (_fseeki64(f, 0, SEEK_END) == 0 && (size = _ftelli64(f)) >= 0)
+        r = disc_check_file(file_read, f, (uint64_t)size, why, n);
+    fclose(f);
+    return r == DISC_OK;
+}
+
 /* Whether to go on with the image: why says what's wrong if not, and is
  * empty if the player chose not to. */
 static int check_image(HWND w, const char* image, char* why, size_t n) {
     static char out[16384];
     why[0] = '\0';
+    if (!check_file(image, why, n)) return 0;
     if (run_dtk("info", image, out, sizeof(out)) == -1) {
         snprintf(why, n, "Couldn't start tools\\dtk.exe, which reads disc images: it should be in the tools folder "
                          "beside PokePark.exe.");

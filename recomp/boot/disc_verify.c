@@ -75,6 +75,54 @@ disc_result disc_check_dol(const uint8_t* dol, size_t len, char* msg, size_t n) 
     return DISC_WRONG_CODE;
 }
 
+static uint32_t be32(disc_read_fn read, void* user, uint64_t offset) {
+    uint8_t b[4];
+    if (!read(user, offset, b, 4)) return 0;
+    return (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3];
+}
+
+#define WII_MAGIC 0x5D1C9EA3u /* at 0x18 of a Wii disc's header */
+#define NKIT_MAGIC 0x4E4B4954u /* "NKIT", at 0x200 of an NKit ISO */
+
+/* What a plain Wii ISO's data partition needs: from the partition table
+ * (0x40000) and the partition's header (its data's offset and size,
+ * 0x2B8), or 0 if there's none. */
+static uint64_t iso_needs(disc_read_fn read, void* user) {
+    uint32_t g, i;
+    for (g = 0; g < 4; g++) {
+        uint32_t count = be32(read, user, 0x40000 + g * 8);
+        uint64_t table = (uint64_t)be32(read, user, 0x40004 + g * 8) << 2;
+        for (i = 0; i < count && i < 64; i++) {
+            uint64_t at = (uint64_t)be32(read, user, table + i * 8) << 2;
+            if (be32(read, user, table + i * 8 + 4) != 0) continue; /* not the game's data */
+            return at + ((uint64_t)be32(read, user, at + 0x2B8) << 2) + ((uint64_t)be32(read, user, at + 0x2BC) << 2);
+        }
+    }
+    return 0;
+}
+
+disc_result disc_check_file(disc_read_fn read, void* user, uint64_t size, char* msg, size_t n) {
+    uint8_t head[0x34];
+    uint64_t want = 0;
+    if (!read(user, 0, head, sizeof(head))) return DISC_OK; /* too short to say: let the reader say */
+    if (!memcmp(head, "RVZ\1", 4) || !memcmp(head, "WIA\1", 4)) {
+        int i;
+        for (i = 0; i < 8; i++) want = want << 8 | head[0x2C + i]; /* the file's size */
+    } else if (be32(read, user, 0x18) == WII_MAGIC) {
+        if (be32(read, user, 0x200) == NKIT_MAGIC) {
+            snprintf(msg, n, "That disc image is an NKit ISO (.nkit.iso), which this can't read. Turn it back into a "
+                             "whole disc image first (NKit's Recover to ISO), or use an .rvz, .iso or .wbfs file.");
+            return DISC_NKIT;
+        }
+        want = iso_needs(read, user);
+    }
+    if (size >= want) return DISC_OK;
+    snprintf(msg, n, "That disc image is incomplete: it has %llu of its %llu MB, so it was only partly copied or "
+                     "downloaded. Copy the whole file again.",
+             (unsigned long long)(size >> 20), (unsigned long long)(want >> 20));
+    return DISC_INCOMPLETE;
+}
+
 int disc_is_original(const char* verify) {
     const char* crc = after(verify, "CRC32 :");
     return hex_is(after(verify, "SHA-1 :"), DISC_REDUMP_SHA1) && (!crc || hex_is(crc, DISC_REDUMP_CRC32));

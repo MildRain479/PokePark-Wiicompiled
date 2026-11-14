@@ -37,29 +37,23 @@ static void close_image(void) {
     sPartition = sDisc = NULL;
 }
 
+/* The image file's bytes, for disc_check_file. */
+static int file_read(void* user, uint64_t offset, void* out, size_t len) {
+    return pread((int)(intptr_t)user, out, len, (off_t)offset) == (ssize_t)len;
+}
+
 /* Opens the image in fd (taking it over); 0, or 1 with what's wrong in err. */
 int disc_image_open(int fd, char* err, size_t n) {
     NodDiscStream stream = {(void*)(intptr_t)fd, stream_read_at, stream_len, stream_close};
     NodDiscOptions options = {0};
     NodDiscHeader header;
     const char* why;
-    uint8_t wia[0x34];
     struct stat st;
     close_image();
-    /* An RVZ or WIA file says how big it is: a copy that stopped part way
-     * opens, but the game's reads past where it ends fail. */
-    if (pread(fd, wia, sizeof(wia), 0) == (ssize_t)sizeof(wia) && fstat(fd, &st) == 0 &&
-        (!memcmp(wia, "RVZ\1", 4) || !memcmp(wia, "WIA\1", 4))) {
-        uint64_t want = 0;
-        int i;
-        for (i = 0; i < 8; i++) want = want << 8 | wia[0x2C + i];
-        if ((uint64_t)st.st_size < want) {
-            snprintf(err, n, "That disc image is incomplete: it has %lld of its %llu MB, so it was only partly copied "
-                     "or downloaded. Copy the whole file to this device again.",
-                     (long long)st.st_size >> 20, (unsigned long long)want >> 20);
-            close(fd);
-            return 1;
-        }
+    /* Copied part way, or an NKit ISO (disc_verify.h). */
+    if (fstat(fd, &st) == 0 && disc_check_file(file_read, (void*)(intptr_t)fd, (uint64_t)st.st_size, err, n) != DISC_OK) {
+        close(fd);
+        return 1;
     }
     memset(&header, 0, sizeof(header));
     options.preloader_threads = 1;

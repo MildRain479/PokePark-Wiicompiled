@@ -598,17 +598,22 @@ public class PokeParkActivity extends NativeActivity {
             ask(asking); // backed out of the picker: there's nothing to play yet
             return;
         }
-        try {
-            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (Exception e) {
-            Log.w("PokePark", "no lasting permission for " + uri, e);
-        }
-        int fd = open(uri);
-        if (fd < 0) {
-            ask("That file couldn't be opened. Choose your disc image of PokePark Wii again.");
-            return;
-        }
-        prefs().edit().putString(DISC, uri.toString()).apply();
-        pickedFd = fd;
+        /* Opened on a thread of its own: a file from a cloud service (Google
+         * Drive's, say) is downloaded as it's opened, a few GB, and on this
+         * one the app would stop answering ("isn't responding"). */
+        new Thread(() -> {
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception e) {
+                Log.w("PokePark", "no lasting permission for " + uri, e);
+            }
+            int fd = open(uri);
+            if (fd < 0) {
+                runOnUiThread(() -> ask("That file couldn't be opened. Choose your disc image of PokePark Wii again."));
+                return;
+            }
+            prefs().edit().putString(DISC, uri.toString()).apply();
+            pickedFd = fd;
+        }, "open disc image").start();
     }
 }
