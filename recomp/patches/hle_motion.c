@@ -230,11 +230,14 @@ int hle_motion(uint32_t held, uint32_t report, int16_t acc[3], int16_t dots[4][2
         if (t >= 0) z += t < 5 ? -3 * G : 3 * G / 2;
     }
     if (use & USE_BAT) {
-        /* A bat's swing toward the screen, then the follow-through: the
-         * one way Blaziken's game counts (scored 400 one run; swung across
-         * the body or along its length, 0). */
-        int t = gesture(&bat, held, HOST_PAD_1 | HOST_PAD_2, report, 14);
-        if (t >= 0) z += t < 8 ? 3 * G : -2 * G;
+        /* A bat's swing toward the screen, the one way Blaziken's game
+         * counts (swung across the body or along its length, 0): away
+         * from the face as it sets off, then the stop. Stop first and
+         * set-off after, as it was, took two presses for one swing: the
+         * first press's set-off and the second's stop. Each part is held
+         * for more than two game frames, so the game sees it. */
+        int t = gesture(&bat, held, HOST_PAD_1 | HOST_PAD_2, report, 16);
+        if (t >= 0) z += t < 8 ? -2 * G : 3 * G;
     }
     acc[0] = clamp16(x);
     acc[1] = clamp16(y);
