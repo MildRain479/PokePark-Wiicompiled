@@ -23,6 +23,10 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <signal.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #define LOG(...) do { if (sLog) { fprintf(stderr, "gx: " __VA_ARGS__); fputc('\n', stderr); } } while (0)
@@ -105,7 +109,13 @@ static void fifo_append(uint32_t value, int size) {
         sFifoCap = sFifoCap ? sFifoCap * 2 : (1u << 20);
         sFifo = (uint8_t*)realloc(sFifo, sFifoCap);
     }
-    for (i = size - 1; i >= 0; i--) sFifo[sFifoLen++] = (uint8_t)(value >> (8 * i));
+    if (size == 4) { /* most writes: a word, stored at once */
+        uint32_t be = BSWAP32(value);
+        memcpy(sFifo + sFifoLen, &be, 4);
+        sFifoLen += 4;
+    } else {
+        for (i = size - 1; i >= 0; i--) sFifo[sFifoLen++] = (uint8_t)(value >> (8 * i));
+    }
     /* Decode each command as soon as it is complete, as the GPU would:
      * indexed matrix loads, vertex arrays and textures are read from
      * memory the game reuses soon after. */
@@ -478,8 +488,9 @@ static void note_writes(uint32_t frame) {
         }
     }
 #else
+    void watch_init(void);
     (void)frame;
-    sWriteWatch = 0;
+    if (sWriteWatch < 0) watch_init();
 #endif
 }
 
@@ -493,6 +504,137 @@ static int written_since(uint32_t addr, int size, uint64_t frame) {
     }
     return 0;
 }
+
+/* Whether nothing has written [addr, addr + size) since frame, where
+ * every write is caught as it's made (watch_pages). Windows' write watch
+ * is read once a frame, so memory rewritten earlier in the same frame
+ * would be missed: there, memory checked more than once a frame (EFB
+ * copies, display lists) is always hashed. */
+static int unwritten_now(uint32_t addr, int size, uint64_t frame) {
+#ifdef _WIN32
+    (void)addr;
+    (void)size;
+    (void)frame;
+    return 0;
+#else
+    return !written_since(addr, size, frame);
+#endif
+}
+
+#ifdef _WIN32
+static void watch_pages(uint32_t addr, int size) {
+    (void)addr;
+    (void)size;
+}
+#else
+/* Without a write watch (Android), pages holding hashed memory are made
+ * read-only (watch_pages). The first write to one faults
+ * (on_write_fault), which makes it writable again and marks it
+ * PAGE_UNWATCHED: written at any time, until it's hashed and watched
+ * again. Hashing every texture every frame took 7% of the Thor's time in
+ * the park. A page whose writes keep faulting (data beside a texture,
+ * written every frame) is left writable for good. Reads by the kernel
+ * into guest memory (a file's) don't fault but fail, so the disc and
+ * NAND reads make their memory writable first (g_mem_will_write). */
+#define PAGE_UNWATCHED 0xFFFFFFFFu
+#define HOT_FAULTS 8 /* faults, each within two frames of the last, that leave a page writable */
+static uint8_t sFaultRun[MEM1_PAGES + MEM2_PAGES];
+static uint32_t sLastFault[MEM1_PAGES + MEM2_PAGES];
+static uint32_t sHostPage; /* the host's page size: 4 KB or a multiple */
+static struct sigaction sOldSegv;
+
+/* Every 4 KB page of the host page at phys (aligned) marked written. */
+static void mark_unwatched(uint32_t phys) {
+    uint32_t p;
+    for (p = phys; p < phys + sHostPage; p += 4096) {
+        int pg = page_of(p);
+        if (pg < 0) continue;
+        if (sPageWritten[pg] != PAGE_UNWATCHED) {
+            uint32_t now = (uint32_t)sFrame;
+            sFaultRun[pg] = now - sLastFault[pg] <= 2 && sFaultRun[pg] < 255 ? sFaultRun[pg] + 1 : 1;
+            sLastFault[pg] = now;
+        }
+        sPageWritten[pg] = PAGE_UNWATCHED;
+    }
+}
+
+static void on_write_fault(int sig, siginfo_t* si, void* uc) {
+    uintptr_t off = (uintptr_t)si->si_addr - (uintptr_t)g_mem;
+    if (si->si_code == SEGV_ACCERR && off < 0x40000000u && page_of((uint32_t)off) >= 0) {
+        /* Another thread may have made it writable already: harmless. */
+        uint32_t phys = (uint32_t)off & ~(sHostPage - 1);
+        mprotect(g_mem + phys, sHostPage, PROT_READ | PROT_WRITE);
+        mark_unwatched(phys);
+        return;
+    }
+    if (sOldSegv.sa_flags & SA_SIGINFO) {
+        if (sOldSegv.sa_sigaction) {
+            sOldSegv.sa_sigaction(sig, si, uc);
+            return;
+        }
+    } else if (sOldSegv.sa_handler != SIG_DFL && sOldSegv.sa_handler != SIG_IGN) {
+        sOldSegv.sa_handler(sig);
+        return;
+    }
+    signal(SIGSEGV, SIG_DFL); /* the access is made again, and crashes as it would have */
+}
+
+static void will_write(uint32_t addr, uint32_t len) {
+    uint32_t phys = addr & 0x3FFFFFFFu, p;
+    if (sWriteWatch != 1 || !len) return;
+    for (p = phys & ~(sHostPage - 1); p - (phys & ~(sHostPage - 1)) < len + (phys & (sHostPage - 1)); p += sHostPage) {
+        int pg = page_of(p);
+        if (pg >= 0 && sPageWritten[pg] != PAGE_UNWATCHED) {
+            mprotect(g_mem + p, sHostPage, PROT_READ | PROT_WRITE);
+            mark_unwatched(p);
+        }
+    }
+}
+
+void watch_init(void) {
+    struct sigaction sa;
+    long page = sysconf(_SC_PAGESIZE);
+    sWriteWatch = 0;
+    if (page < 4096 || (page & (page - 1))) return;
+    sHostPage = (uint32_t)page;
+    memset(sPageWritten, 0xFF, sizeof(sPageWritten)); /* PAGE_UNWATCHED */
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = on_write_fault;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGSEGV, &sa, &sOldSegv)) return;
+    g_mem_will_write = will_write;
+    sWriteWatch = 1;
+}
+
+/* Guest memory [addr, addr + size), just hashed, watched for writes. */
+static void watch_pages(uint32_t addr, int size) {
+    uint32_t phys = addr & 0x3FFFFFFFu, end, p, run = 0, runLen = 0;
+    if (sWriteWatch != 1 || size <= 0) return;
+    end = phys + (uint32_t)size - 1;
+    if (page_of(phys) < 0 || page_of(end) < 0 || page_of(end) - page_of(phys) != (int)((end >> 12) - (phys >> 12))) return;
+    phys &= ~(sHostPage - 1);
+    for (p = phys; p <= end; p += sHostPage) {
+        int pg = page_of(p), k, hot = 0;
+        uint32_t q;
+        for (k = 0; k < (int)(sHostPage >> 12); k++) {
+            if (page_of(p + (uint32_t)k * 4096) < 0 || sFaultRun[pg + k] >= HOT_FAULTS) hot = 1;
+        }
+        if (!hot && sPageWritten[pg] == PAGE_UNWATCHED) {
+            /* Written up to now, as far as anything hashed before goes. */
+            for (q = p; q < p + sHostPage; q += 4096) sPageWritten[page_of(q)] = (uint32_t)sFrame;
+            if (runLen && run + runLen == p) {
+                runLen += sHostPage;
+            } else {
+                if (runLen) mprotect(g_mem + run, runLen, PROT_READ);
+                run = p;
+                runLen = sHostPage;
+            }
+        }
+    }
+    if (runLen) mprotect(g_mem + run, runLen, PROT_READ);
+}
+#endif
 #define TEX_CACHE 4096
 #define TEX_WAYS 4
 static TexEntry sTexCache[TEX_CACHE];
@@ -553,6 +695,7 @@ typedef struct CopyTex {
     uint32_t mem_hash; /* of that memory when the copy was made */
     uint64_t checked;  /* frame its memory was last checked in, plus 1 */
     uint64_t made;     /* frame it was last made in, plus 1 */
+    uint64_t hashed;   /* frame mem_hash was taken in */
 } CopyTex;
 static CopyTex sCopies[64];
 static int sCopyCount;
@@ -572,7 +715,11 @@ static int copy_still_valid(CopyTex* t) {
     /* Once a frame: a full-screen copy is over a megabyte, and a frame can
      * sample it many times. */
     if (t->checked == sFrame + 1) return 1;
-    if (t->bytes > 0 && hash_bytes(MA(t->addr), t->bytes) != t->mem_hash) return 0;
+    if (t->bytes > 0 && !unwritten_now(t->addr, t->bytes, t->hashed)) {
+        if (hash_bytes(MA(t->addr), t->bytes) != t->mem_hash) return 0;
+        t->hashed = sFrame;
+        watch_pages(t->addr, t->bytes);
+    }
     t->checked = sFrame + 1;
     return 1;
 }
@@ -582,7 +729,7 @@ static int copy_still_valid(CopyTex* t) {
  * (a photo, saved as a JPEG); the ones made every frame (reflections,
  * blur) only the GPU samples, and reading those back would hold it up. */
 int gx_register_copy(uint32_t addr, uint32_t handle, int width, int height, int fmt) {
-    int i, again;
+    int i, again, reuse;
     if (getenv("RECOMP_GX_COPY_LOG")) {
         static uint32_t seen[256];
         static int nseen;
@@ -598,6 +745,10 @@ int gx_register_copy(uint32_t addr, uint32_t handle, int width, int height, int 
         if (sCopies[i].addr == addr) break;
     }
     again = i < sCopyCount && sCopies[i].made >= sFrame; /* this frame or the last */
+    /* Its memory as when last made, unless written since: not hashed
+     * again (a full-screen copy is over a megabyte, made every frame). */
+    reuse = i < sCopyCount && sCopies[i].bytes == copy_bytes(fmt, width, height) && sCopies[i].bytes > 0 &&
+            unwritten_now(addr, sCopies[i].bytes, sCopies[i].hashed);
     if (i == sCopyCount) {
         if (sCopyCount == 64) i = 0;
         else sCopyCount++;
@@ -608,7 +759,11 @@ int gx_register_copy(uint32_t addr, uint32_t handle, int width, int height, int 
     sCopies[i].width = width;
     sCopies[i].height = height;
     sCopies[i].bytes = copy_bytes(fmt, width, height);
-    sCopies[i].mem_hash = sCopies[i].bytes > 0 ? hash_bytes(MA(addr), sCopies[i].bytes) : 0;
+    if (!reuse) {
+        sCopies[i].mem_hash = sCopies[i].bytes > 0 ? hash_bytes(MA(addr), sCopies[i].bytes) : 0;
+        sCopies[i].hashed = sFrame;
+        watch_pages(addr, sCopies[i].bytes);
+    }
     sCopies[i].checked = sFrame + 1;
     sStateDirty = 1; /* draws sampling addr now get the copy */
     return !again;
@@ -626,7 +781,11 @@ void gx_copy_write_back(uint32_t addr, int fmt, int intensity, int w, int h, int
         if (hash_bytes(MA(addr), sCopies[i].bytes) != sCopies[i].mem_hash) return;
     }
     gx_encode_copy(MA(addr), fmt, intensity, w, h, stride, rgba);
-    if (i < sCopyCount && sCopies[i].bytes > 0) sCopies[i].mem_hash = hash_bytes(MA(addr), sCopies[i].bytes);
+    if (i < sCopyCount && sCopies[i].bytes > 0) {
+        sCopies[i].mem_hash = hash_bytes(MA(addr), sCopies[i].bytes);
+        sCopies[i].hashed = sFrame;
+        watch_pages(addr, sCopies[i].bytes);
+    }
     if (getenv("RECOMP_GX_COPY_LOG"))
         fprintf(stderr, "gx: EFB copy %08X %dx%d fmt %d written to memory (frame %llu)\n", addr, w, h, fmt,
                 (unsigned long long)sFrame);
@@ -723,6 +882,7 @@ static uint32_t texture_for_map(int map) {
         } else {
             image = hash_bytes(MA(addr), size);
             e->hashed = sFrame;
+            watch_pages(addr, size);
         }
         e->image_hash = image;
         h = image;
@@ -1258,11 +1418,20 @@ static void arena_free_later(int first, int n) {
     sLateCount++;
 }
 
-/* A part of an array the list's vertices index, and its bytes' hash. */
+/* A part of an array the list's vertices index (attribute attr's, off
+ * bytes from its base, at addr when hashed), and its bytes' hash. */
 typedef struct ListRange {
-    uint32_t addr, len;
+    uint32_t addr, len, off;
+    int attr;
     uint64_t hash;
 } ListRange;
+
+/* Decoded vertices in the arena, shared by the entries of one list called
+ * with its arrays in different places but the same in them (the park's
+ * trees, rocks and flowers: one list, and a copy of its arrays for each). */
+typedef struct ListVerts {
+    int first, verts, refs;
+} ListVerts;
 
 typedef struct ListEntry {
     uint32_t addr, size; /* 0 size: unused */
@@ -1274,6 +1443,10 @@ typedef struct ListEntry {
     int nranges, rangecap;
     uint64_t used;       /* the last frame it was called in */
     int changed;         /* calls in a row it was different */
+    uint64_t hashed;     /* the frame its bytes and ranges were last hashed in */
+    uint64_t shape;      /* list_state but for the array bases (list_shape) */
+    int movable;         /* the list sets no array registers itself: its arrays may be elsewhere */
+    ListVerts* shared;   /* its vertices, once decoded (first and verts are theirs) */
 } ListEntry;
 
 #define LIST_SETS 4096
@@ -1283,6 +1456,10 @@ typedef struct ListEntry {
 #define LIST_CHANGING 4
 #define LIST_UNCACHED 1000000
 static ListEntry sLists[LIST_SETS * LIST_WAYS];
+/* By list and shape: the entry decoded or checked last, whose vertices
+ * another call of the list with its arrays elsewhere may share. */
+#define LIST_SHAPES 16384
+static ListEntry* sShapes[LIST_SHAPES];
 
 /* The list running: drawn from its entry's vertices (sListBuild 0), or
  * decoded into sListVerts for it; sListAt vertices so far, of sListMax
@@ -1296,17 +1473,28 @@ static int sRangeCount, sRangeCap;
 /* Spans for draws outside display lists: the rest of this frame's. */
 static int sTransNext, sTransLeft;
 
-/* What a list's vertices depend on besides its bytes and the arrays: the
- * vertex descriptors and formats, the array registers, and the default
- * matrix indices. */
-static uint64_t list_state(void) {
+/* What a list's vertices depend on besides its bytes and what's in the
+ * arrays: the vertex descriptors and formats, the array strides, and the
+ * default matrix indices (list_shape); and where the arrays are
+ * (list_state). */
+static uint64_t list_shape(void) {
     uint64_t h = 0x243F6A8885A308D3ull;
     int i;
     h = mix64(h ^ cp[0x50] ^ ((uint64_t)cp[0x60] << 32));
     for (i = 0; i < 8; i++) h = mix64(h ^ cp[0x70 + i] ^ ((uint64_t)cp[0x80 + i] << 32) ^ ((uint64_t)cp[0x90 + i] << 16));
-    for (i = 0; i < 12; i++) h = mix64(h ^ cp[0xA0 + i] ^ ((uint64_t)cp[0xB0 + i] << 32));
+    for (i = 0; i < 12; i++) h = mix64(h ^ cp[0xB0 + i]);
     return mix64(h ^ xf[0x1018] ^ ((uint64_t)xf[0x1019] << 32));
 }
+
+static uint64_t list_state(uint64_t shape) {
+    uint64_t h = shape;
+    int i;
+    for (i = 0; i < 12; i++) h = mix64(h ^ cp[0xA0 + i]);
+    return h;
+}
+
+/* Set by list_vertex_count: the list writes array registers itself. */
+static int sListSetsArrays;
 
 /* The vertices of the draws in list p[0..len), as run would draw them;
  * -1 if implausibly many. */
@@ -1315,12 +1503,14 @@ static int list_vertex_count(const uint8_t* p, uint32_t len) {
     uint32_t pos = 0;
     int64_t total = 0;
     memcpy(saved, cp + 0x50, sizeof(saved));
+    sListSetsArrays = 0;
     while (pos < len) {
         uint32_t left = len - pos;
         uint8_t op = p[pos];
         if (op == 0x08) {
             if (left < 6) break;
             if (p[pos + 1] >= 0x50 && p[pos + 1] < 0x98) cp[p[pos + 1]] = rd32(p + pos + 2);
+            if (p[pos + 1] >= 0xA0 && p[pos + 1] < 0xC0) sListSetsArrays = 1;
             pos += 6;
         } else if (op == 0x10) {
             if (left < 5) break;
@@ -1369,15 +1559,38 @@ static void list_note_arrays(const uint8_t* p, const VtxFormat* f, int count) {
             sRangeCap = sRangeCap ? sRangeCap * 2 : 64;
             sRanges = (ListRange*)realloc(sRanges, (size_t)sRangeCap * sizeof(ListRange));
         }
+        sRanges[sRangeCount].attr = a;
+        sRanges[sRangeCount].off = lo * stride;
         sRanges[sRangeCount].addr = base + lo * stride;
         sRanges[sRangeCount].len = (hi - lo) * stride + (uint32_t)elem;
         sRangeCount++;
     }
 }
 
+/* By attribute, then place. */
 static int range_order(const void* a, const void* b) {
-    uint32_t x = ((const ListRange*)a)->addr, y = ((const ListRange*)b)->addr;
-    return x < y ? -1 : x > y;
+    const ListRange *x = (const ListRange*)a, *y = (const ListRange*)b;
+    if (x->attr != y->attr) return x->attr < y->attr ? -1 : 1;
+    return x->addr < y->addr ? -1 : x->addr > y->addr;
+}
+
+/* Whether nothing has written the list or the arrays it reads since they
+ * were hashed (unwritten_now): not hashed again then. */
+static int list_unwritten(const ListEntry* e) {
+    int i;
+    if (!unwritten_now(e->addr, (int)e->size, e->hashed)) return 0;
+    for (i = 0; i < e->nranges; i++) {
+        if (!unwritten_now(e->ranges[i].addr, (int)e->ranges[i].len, e->hashed)) return 0;
+    }
+    return 1;
+}
+
+/* The list and its ranges, just hashed, watched for writes. */
+static void list_watch(ListEntry* e) {
+    int i;
+    e->hashed = sFrame;
+    watch_pages(e->addr, (int)e->size);
+    for (i = 0; i < e->nranges; i++) watch_pages(e->ranges[i].addr, (int)e->ranges[i].len);
 }
 
 static int list_ranges_same(const ListEntry* e) {
@@ -1389,22 +1602,69 @@ static int list_ranges_same(const ListEntry* e) {
 }
 
 static void list_drop_vertices(ListEntry* e) {
-    if (e->first >= 0) arena_free_later(e->first, e->verts);
+    if (e->shared) {
+        if (--e->shared->refs == 0) {
+            if (e->shared->first >= 0) arena_free_later(e->shared->first, e->shared->verts);
+            free(e->shared);
+        }
+        e->shared = NULL;
+    } else if (e->first >= 0) {
+        arena_free_later(e->first, e->verts);
+    }
     e->first = -1;
     e->verts = 0;
     e->valid = 0;
+}
+
+static ListEntry** shape_slot(uint32_t addr, uint32_t size, uint64_t shape) {
+    return &sShapes[(mix64(shape ^ ((uint64_t)addr << 32) ^ size) >> 20) % LIST_SHAPES];
+}
+
+/* A new entry e for a list whose bytes hash to hash, given the vertices
+ * of d, the same list in the same shape, if what's in its arrays where
+ * they are now is what d's vertices were decoded from. */
+static int list_share(ListEntry* e, const ListEntry* d, uint64_t hash) {
+    int i;
+    if (!d->valid || !d->movable || !d->shared || d->addr != e->addr || d->size != e->size || d->shape != e->shape ||
+        d->hash != hash)
+        return 0;
+    for (i = 0; i < d->nranges; i++) {
+        const ListRange* r = &d->ranges[i];
+        uint32_t a = (cp[0xA0 + r->attr] & 0x3FFFFFFF) + r->off;
+        if (!phys_ok(a, r->len) || hash_bytes64(MA(a), r->len) != r->hash) return 0;
+    }
+    if (d->nranges > e->rangecap) {
+        e->rangecap = d->nranges;
+        e->ranges = (ListRange*)realloc(e->ranges, (size_t)e->rangecap * sizeof(ListRange));
+    }
+    for (i = 0; i < d->nranges; i++) {
+        e->ranges[i] = d->ranges[i];
+        e->ranges[i].addr = (cp[0xA0 + d->ranges[i].attr] & 0x3FFFFFFF) + d->ranges[i].off;
+    }
+    e->nranges = d->nranges;
+    e->hash = hash;
+    e->shared = d->shared;
+    e->shared->refs++;
+    e->first = d->first;
+    e->verts = d->verts;
+    e->movable = 1;
+    e->valid = 1;
+    e->changed = 0;
+    list_watch(e);
+    return 1;
 }
 
 /* Before list addr (size bytes) runs: its entry drawn from, or decoded
  * into; neither (sList NULL) for a list that changes from call to call,
  * whose draws go to this frame's spans. */
 static void list_begin(uint32_t addr, uint32_t size) {
-    uint64_t state, key, hash = 0;
-    ListEntry *set, *e = NULL;
+    uint64_t shape, state, key, hash = 0;
+    ListEntry *set, *e = NULL, *d;
     int i, count;
     sList = NULL;
     if (!sArena || (long)sFrame == sDebugFrame) return;
-    state = list_state();
+    shape = list_shape();
+    state = list_state(shape);
     key = mix64(state ^ ((uint64_t)addr << 32) ^ size);
     set = &sLists[(key % LIST_SETS) * LIST_WAYS];
     for (i = 0; i < LIST_WAYS && !e; i++) {
@@ -1414,8 +1674,16 @@ static void list_begin(uint32_t addr, uint32_t size) {
         e->used = sFrame;
         /* One that has kept changing is only checked now and then. */
         if (e->changed >= LIST_CHANGING && (sFrame & 63) != 0) return;
+        if (e->valid && list_unwritten(e)) {
+            sList = e;
+            sListBuild = 0;
+            sListAt = 0;
+            return;
+        }
         hash = hash_bytes64(MA(addr), size);
         if (e->valid && hash == e->hash && list_ranges_same(e)) {
+            list_watch(e);
+            if (e->movable) *shape_slot(addr, size, shape) = e;
             e->changed = 0;
             sList = e;
             sListBuild = 0;
@@ -1433,16 +1701,26 @@ static void list_begin(uint32_t addr, uint32_t size) {
             }
             if (set[i].used < e->used) e = &set[i];
         }
+        d = *shape_slot(addr, size, shape);
+        if (d == e) d = NULL;
         if (e->size) list_drop_vertices(e);
         e->addr = addr;
         e->size = size;
         e->state = state;
+        e->shape = shape;
+        e->movable = 0;
         e->first = -1;
         e->verts = 0;
         e->valid = 0;
         e->changed = 0;
         e->used = sFrame;
         hash = hash_bytes64(MA(addr), size);
+        if (d && list_share(e, d, hash)) {
+            sList = e;
+            sListBuild = 0;
+            sListAt = 0;
+            return;
+        }
     }
     count = list_vertex_count(MA(addr), size);
     if (count < 0) {
@@ -1479,7 +1757,7 @@ static void list_end(void) {
     }
     if (sRangeCount > 1) qsort(sRanges, (size_t)sRangeCount, sizeof(ListRange), range_order);
     for (i = 0; i < sRangeCount; i++) {
-        if (n && sRanges[i].addr <= sRanges[n - 1].addr + sRanges[n - 1].len + 64) {
+        if (n && sRanges[i].attr == sRanges[n - 1].attr && sRanges[i].addr <= sRanges[n - 1].addr + sRanges[n - 1].len + 64) {
             uint32_t end = sRanges[i].addr + sRanges[i].len;
             if (end > sRanges[n - 1].addr + sRanges[n - 1].len) sRanges[n - 1].len = end - sRanges[n - 1].addr;
         } else {
@@ -1502,6 +1780,13 @@ static void list_end(void) {
         list_drop_vertices(e);
     } else {
         e->valid = 1;
+        e->movable = !sListSetsArrays;
+        e->shared = (ListVerts*)malloc(sizeof(ListVerts));
+        e->shared->first = e->first;
+        e->shared->verts = e->verts;
+        e->shared->refs = 1;
+        list_watch(e);
+        if (e->movable) *shape_slot(e->addr, e->size, e->shape) = e;
     }
 }
 
@@ -1850,7 +2135,7 @@ void gx_flush(void) {
     size_t used;
     if (!sReady || !sFifoLen) return;
     used = run(sFifo, sFifoLen, 0, &sNeed);
-    memmove(sFifo, sFifo + used, sFifoLen - used);
+    if (used < sFifoLen) memmove(sFifo, sFifo + used, sFifoLen - used);
     sFifoLen -= used;
 }
 

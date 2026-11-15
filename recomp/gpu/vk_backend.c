@@ -1439,11 +1439,18 @@ static void write_bmp(const char* path, const uint8_t* rgba, int w, int h) {
 /* ------------------------------------------------------------------------ */
 /* Frames */
 
+/* Time the game's thread spent waiting for the GPU or the display (a
+ * frame's slot, the last present, a swapchain image), in time-base ticks,
+ * for the fps line (gx_frames.c). */
+uint64_t g_gpu_wait_ticks;
+
 static void begin_slot(void) {
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     int i;
     if (S->serial) {
+        uint64_t t0 = ppc_timebase();
         CHECK(vkWaitForFences(sDev, 1, &S->fence, VK_TRUE, UINT64_MAX));
+        g_gpu_wait_ticks += ppc_timebase() - t0;
         CHECK(vkResetFences(sDev, 1, &S->fence));
         if (S->serial > sDone) sDone = S->serial;
         if (sTimes) {
@@ -1549,7 +1556,11 @@ static void end_slot(int acquired, uint32_t image, int dump, int dw, int dh) {
         si[1].pWaitDstStageMask = wait;
         si[1].pSignalSemaphores = signals;
     }
-    present_done();
+    {
+        uint64_t t0 = ppc_timebase();
+        present_done();
+        g_gpu_wait_ticks += ppc_timebase() - t0;
+    }
     CHECK(vkQueueSubmit(sQueue, acquired ? 2 : 1, si, S->fence));
     S->serial = sSerial++;
 #ifdef __ANDROID__
@@ -3617,8 +3628,10 @@ static int vk_present(int x, int y, int cw, int ch, int may_drop) {
             /* Above 60 fps a frame is never waited for (gx_frames.c):
              * left out if no image is free. */
             VkResult r;
+            uint64_t t0 = ppc_timebase();
             present_done();
             r = vkAcquireNextImageKHR(sDev, sChain, may_drop ? 0 : UINT64_MAX, S->acquired, VK_NULL_HANDLE, &image);
+            g_gpu_wait_ticks += ppc_timebase() - t0;
             if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) {
                 VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
                 acquired = 1;

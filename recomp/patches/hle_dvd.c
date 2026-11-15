@@ -156,6 +156,7 @@ void hle_dvd_boot_setup(void) {
 int hle_dvd_read(uint64_t offset, uint32_t len, uint32_t dst) {
     uint64_t end = offset + len;
     int i, ok = 1;
+    if (g_mem_will_write) g_mem_will_write(dst, len);
     if (sImageRead) {
         HLE_LOG("disc read %08llX+%X", (unsigned long long)offset, (unsigned)len);
         if (sImageRead(offset, MA(dst), len)) return 1;

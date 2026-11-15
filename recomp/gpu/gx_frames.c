@@ -97,8 +97,12 @@ static unsigned sPresentsDropped; /* frames left out as the display wasn't ready
  * window title and, with RECOMP_FPS=1, on stderr. */
 static void report(void) {
     static LARGE_INTEGER freq, since, last;
-    static unsigned frames;
-    static double worst;
+    static unsigned frames, late;
+    static double worst, worstWork;
+    /* The game thread's own work in the frame: not waiting for an event,
+     * nor for the GPU or the display. */
+    extern uint64_t g_wait_ticks, g_gpu_wait_ticks;
+    static uint64_t frameWait, frameGpu;
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     if (!freq.QuadPart) {
@@ -106,34 +110,43 @@ static void report(void) {
         since = last = now;
     } else {
         double ms = (now.QuadPart - last.QuadPart) * 1000.0 / freq.QuadPart;
+        double work = ms - (double)(g_wait_ticks - frameWait + g_gpu_wait_ticks - frameGpu) * 1000.0 / PPC_TB_HZ;
         if (ms > worst) worst = ms;
+        if (work > worstWork) worstWork = work;
+        if (ms > 20.0) late++; /* a 60 Hz retrace missed */
         frames++;
         last = now;
     }
+    frameWait = g_wait_ticks;
+    frameGpu = g_gpu_wait_ticks;
     if (now.QuadPart - since.QuadPart >= freq.QuadPart) {
         char title[96];
         double fps = frames * (double)freq.QuadPart / (now.QuadPart - since.QuadPart);
         const char* e = getenv("RECOMP_FPS");
         /* The share of the second the game thread was not waiting for an
          * event: how much headroom is left. */
-        extern uint64_t g_wait_ticks;
-        static uint64_t lastWait;
+        static uint64_t lastWait, lastGpu;
         static unsigned lastGameFrames, lastDropped;
         double secs = (double)(now.QuadPart - since.QuadPart) / freq.QuadPart;
         double busy = 100.0 * (1.0 - (double)(g_wait_ticks - lastWait) / PPC_TB_HZ / secs);
+        double gpu = 100.0 * (double)(g_gpu_wait_ticks - lastGpu) / PPC_TB_HZ / secs;
         lastWait = g_wait_ticks;
+        lastGpu = g_gpu_wait_ticks;
         snprintf(title, sizeof(title), "PokePark (recompiled) - %.2f fps, slowest frame %.1f ms, busy %.0f%%", fps,
                  worst, busy);
         win_set_title(title);
         if (e && *e == '1')
-            fprintf(stderr, "fps: %.2f, slowest frame %.1f ms, busy %.0f%%, game %u, left out %u\n", fps, worst, busy,
-                    sGameFrames - lastGameFrames, sPresentsDropped - lastDropped);
+            fprintf(stderr,
+                    "fps: %.2f, slowest frame %.1f ms, over 20 ms %u, busy %.0f%%, game %u, left out %u, gpu wait %.0f%%, "
+                    "most work %.1f ms\n",
+                    fps, worst, late, busy, sGameFrames - lastGameFrames, sPresentsDropped - lastDropped, gpu, worstWork);
         lastGameFrames = sGameFrames;
         lastDropped = sPresentsDropped;
         if (e && *e == '1') print_gl_stats();
         since = now;
         frames = 0;
-        worst = 0;
+        late = 0;
+        worst = worstWork = 0;
     }
 }
 

@@ -280,8 +280,10 @@ Diagnostics:
 - `RECOMP_CALLS=<n>` lists the n functions called most in the last 5 s
   before the watchdog stops a run (for finding what a stuck game is
   polling).
-- `RECOMP_FPS=1` prints the frame rate, the slowest frame and how busy
-  the game thread was every second, with OpenGL calls and time per
+- `RECOMP_FPS=1` prints the frame rate, the slowest frame, the frames
+  over 20 ms (a missed 60 Hz retrace), how busy the game thread was,
+  the share it waited for the GPU or the display (Vulkan) and its
+  longest frame of work every second, with OpenGL calls and time per
   entry point.
 - `RECOMP_GX_SKIP=<first>-<last>` drops those draws (numbered from 0 in
   each frame), to find which draws make up something on screen;

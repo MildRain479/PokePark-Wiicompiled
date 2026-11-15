@@ -67,6 +67,11 @@ extern void (*g_gx_flush)(void);
 /* Puts the EFB copy at a guest address (physical) into guest memory, as
  * the GPU last made it, for the CPU to read; set by the GPU module. */
 extern void (*g_gx_copy_sync)(uint32_t addr);
+/* Called before the kernel writes guest memory (a file read into it):
+ * pages the GPU module watches for writes are read-only, and a read into
+ * one would fail instead of faulting (gx_fifo.c). NULL when nothing is
+ * watched. */
+extern void (*g_mem_will_write)(uint32_t addr, uint32_t len);
 /* Frames shown between the game's (interpolated, gl_backend.c): when the
  * next is due on the time base (0: none), and draws it. The idle wait
  * (hle_irq.c) draws them while the game has nothing to do. */
@@ -215,7 +220,15 @@ static inline uint32_t psq_quant(double v, int type, int scale, double lo, doubl
     return (uint32_t)(int32_t)v;
 }
 
-static inline void psq_load(ppc_t* c, int fd, uint32_t ea, int w, int i) {
+#ifdef _MSC_VER
+#define PSQ_INLINE static __forceinline
+#define PSQ_NOINLINE static __declspec(noinline)
+#else
+#define PSQ_INLINE static inline __attribute__((always_inline))
+#define PSQ_NOINLINE static __attribute__((noinline))
+#endif
+
+PSQ_NOINLINE void psq_load_q(ppc_t* c, int fd, uint32_t ea, int w, int i) {
     uint32_t gqr = c->gqr[i];
     int type = (gqr >> 16) & 7, scale = (gqr >> 24) & 0x3F;
     int size = type == 4 || type == 6 ? 1 : type == 5 || type == 7 ? 2 : 4;
@@ -227,7 +240,7 @@ static inline void psq_load(ppc_t* c, int fd, uint32_t ea, int w, int i) {
     c->ps1[fd] = w ? 1.0 : psq_dequant(r1, type, scale);
 }
 
-static inline void psq_store(ppc_t* c, int fs, uint32_t ea, int w, int i) {
+PSQ_NOINLINE void psq_store_q(ppc_t* c, int fs, uint32_t ea, int w, int i) {
     uint32_t gqr = c->gqr[i];
     int type = gqr & 7, scale = (gqr >> 8) & 0x3F;
     double v[2];
@@ -243,6 +256,24 @@ static inline void psq_store(ppc_t* c, int fs, uint32_t ea, int w, int i) {
         default: st_f32(ea + 4 * n, v[n]); break;
         }
     }
+}
+/* Most paired-single loads and stores are plain floats (GQR types 0-3):
+ * those inline, and only the quantized ones call out. */
+PSQ_INLINE void psq_load(ppc_t* c, int fd, uint32_t ea, int w, int i) {
+    if (!(c->gqr[i] & 0x40000u)) {
+        c->f[fd] = ld_f32(ea);
+        c->ps1[fd] = w ? 1.0 : ld_f32(ea + 4);
+        return;
+    }
+    psq_load_q(c, fd, ea, w, i);
+}
+PSQ_INLINE void psq_store(ppc_t* c, int fs, uint32_t ea, int w, int i) {
+    if (!(c->gqr[i] & 4u)) {
+        st_f32(ea, c->f[fs]);
+        if (!w) st_f32(ea + 4, c->ps1[fs]);
+        return;
+    }
+    psq_store_q(c, fs, ea, w, i);
 }
 uint32_t ppc_mfspr(ppc_t* c, int spr);
 void ppc_mtspr(ppc_t* c, int spr, uint32_t v);

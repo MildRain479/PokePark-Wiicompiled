@@ -113,6 +113,7 @@ FILE* hle_nand_open(const char* nand, int mode, int32_t* err) {
 }
 
 int32_t hle_nand_read(FILE* f, uint32_t dst, uint32_t len) {
+    if (g_mem_will_write) g_mem_will_write(dst, len);
     return (int32_t)fread(MA(dst), 1, len, f);
 }
 
