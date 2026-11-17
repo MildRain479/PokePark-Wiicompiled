@@ -10,7 +10,8 @@ Getting started
   PokePark Wii: Pikachu's Adventure (USA, R8AE01): an ISO, RVZ, WBFS
   or the like. It sets the game up in an R8AE01 folder beside the
   program; your saves are kept in R8AE01\nand.
-- Keep the prompts and tools folders beside PokePark.exe.
+- Keep the prompts and tools folders, SDL3.dll and vcruntime140.dll
+  beside PokePark.exe.
 
 Steam Deck
 - Not tested yet, but it should run through Proton: in Desktop Mode, add
@@ -24,7 +25,9 @@ Settings
   settings.ini beside the program.
 - Renderer: Vulkan by default; OpenGL in Options > Display (from the
   next start). If Vulkan can't start, OpenGL is used.
-- Xbox-style controllers and keyboard and mouse are supported.
+- Controllers: Xbox, PlayStation, Switch Pro, 8BitDo and most others,
+  over USB or Bluetooth (read through SDL3), and keyboard and mouse.
+  Buttons go by position: the bottom face button is A.
 - Updates: at start it asks GitHub whether a newer version is out, and
   if so, Options > Display > Updates opens its download page. Turn the
   Updates setting off to stop it asking.

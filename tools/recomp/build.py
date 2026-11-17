@@ -84,6 +84,30 @@ def vulkan_sdk():
     return sdk if sdk and os.path.exists(os.path.join(sdk, "Include", "vulkan", "vulkan.h")) else None
 
 
+# SDL3, for controllers other than Xbox ones (input_win32.c): the Vulkan
+# SDK's SDL3.dll, loaded at start beside the program if it's there, with
+# the Visual C++ runtime it needs (which Microsoft lets programs carry) and
+# its license. Its headers are the SDK's too. Without them, XInput alone.
+def sdl3_files():
+    if not VULKAN or os.name != "nt":
+        return []
+    dll = os.path.join(VULKAN, "Bin", "SDL3.dll")
+    if not (os.path.exists(dll) and os.path.exists(os.path.join(VULKAN, "Include", "SDL3", "SDL_gamepad.h"))):
+        return []
+    redist = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(vcvars()))), "Redist", "MSVC")
+    crts = sorted(glob.glob(os.path.join(redist, "*", "x64", "Microsoft.VC14*.CRT", "vcruntime140.dll")),
+                  key=lambda d: [int(x) for x in os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(d)))).split(".")
+                                 if x.isdigit()])
+    if not crts:
+        return []
+    return [dll, crts[-1], os.path.join(ROOT, "recomp", "assets", "sdl3_license.txt")]
+
+
+def copy_sdl3(dest):
+    for f in sdl3_files():
+        shutil.copy2(f, os.path.join(dest, os.path.basename(f)))
+
+
 # The Vulkan shaders, compiled to SPIR-V as C arrays in gen/vk_shaders.h
 # when one changed (and vk_backend.c with it).
 def vulkan_shaders(glslc):
@@ -457,6 +481,10 @@ def main():
     if VULKAN:
         DEFINES.append("RECOMP_VULKAN")
         vulkan_shaders(os.path.join(VULKAN, "Bin", "glslc.exe" if os.name == "nt" else "glslc"))
+        if sdl3_files():
+            DEFINES.append("RECOMP_SDL3")
+        elif os.name == "nt":
+            print("no SDL3 in the Vulkan SDK: controllers through XInput alone")
     elif not args.android:
         print("no Vulkan SDK: building without the Vulkan device")
 
@@ -487,6 +515,7 @@ def main():
         build_cc(common, TARGETS, args.opt or "-O2")
     # The button prompt icons, beside the program (prompts.c).
     shutil.copytree(os.path.join(ROOT, "recomp", "assets", "prompts"), os.path.join(OUT, "prompts"), dirs_exist_ok=True)
+    copy_sdl3(OUT)
     if args.dist:
         # Started without arguments it finds the game in an R8AE01 folder
         # beside it or above it (boot.c), so this runs in place.
@@ -494,6 +523,7 @@ def main():
         os.makedirs(dist, exist_ok=True)
         shutil.copy2(os.path.join(OUT, "boot.exe"), os.path.join(dist, "PokePark.exe"))
         shutil.copytree(os.path.join(OUT, "prompts"), os.path.join(dist, "prompts"), dirs_exist_ok=True)
+        copy_sdl3(dist)
         # decomp-toolkit, which the game's set-up screen extracts disc images with (import_win32.c).
         dtk = os.path.join(ROOT, "build", "tools", "dtk.exe")
         if os.path.exists(dtk):
@@ -502,8 +532,8 @@ def main():
             shutil.copy2(os.path.join(ROOT, "recomp", "assets", "dtk_license.txt"), os.path.join(dist, "tools", "dtk_license.txt"))
         print("dist:", dist)
     if args.public:
-        # What players download: the program, its icons, the disc reader and
-        # a readme. Nothing of the game's.
+        # What players download: the program, its icons, the disc reader,
+        # SDL3 for controllers and a readme. Nothing of the game's.
         rel = os.path.join(ROOT, "Releases")
         os.makedirs(rel, exist_ok=True)
         for old in ("prompts", "tools"):
@@ -511,6 +541,9 @@ def main():
         shutil.copy2(os.path.join(OUT, "boot.exe"), os.path.join(rel, "PokePark.exe"))
         shutil.copytree(os.path.join(ROOT, "recomp", "assets", "prompts"), os.path.join(rel, "prompts"))
         shutil.copy2(os.path.join(ROOT, "recomp", "assets", "release_readme.txt"), os.path.join(rel, "README.txt"))
+        copy_sdl3(rel)
+        if not sdl3_files():
+            print("public: no SDL3; the release reads Xbox controllers alone")
         dtk = os.path.join(ROOT, "build", "tools", "dtk.exe")
         if os.path.exists(dtk):
             os.makedirs(os.path.join(rel, "tools"))

@@ -1,5 +1,4 @@
-/* Wii Remote 0 from the keyboard and the first XInput controller, for
- * hle_wpad.c. PokePark is played with the remote held sideways, like a
+/* Wii Remote 0 from the keyboard and the controllers, for hle_wpad.c. PokePark is played with the remote held sideways, like a
  * classic pad: the d-pad moves, 1 and 2 are the face buttons. By default:
  *
  *                    keyboard / mouse           controller
@@ -25,6 +24,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -46,6 +46,184 @@ typedef struct {
 
 static DWORD(WINAPI* pXInputGetState)(DWORD, XPadState*);
 static DWORD(WINAPI* pXInputSetState)(DWORD, XPadVibration*);
+
+/* Controllers through SDL3 (SDL3.dll beside the program, loaded at start;
+ * tools/recomp/build.py puts it there): PlayStation, Switch, 8BitDo and
+ * most others, over USB or Bluetooth, and Xbox ones. Without it, the
+ * first XInput controller. With it, every controller connected counts:
+ * their buttons together, and each stick and trigger the one pushed
+ * furthest. Read as an XInput state, which the bindings are in, SDL's
+ * face buttons by where they are (the bottom one is A, as on an Xbox
+ * controller: a DualSense's cross). */
+#ifdef RECOMP_SDL3
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_hints.h>
+#include <SDL3/SDL_init.h>
+#define SDL_FNS(X)                                                    \
+    X(bool, SDL_SetHint, (const char*, const char*))                  \
+    X(bool, SDL_Init, (SDL_InitFlags))                                \
+    X(const char*, SDL_GetError, (void))                              \
+    X(void, SDL_SetGamepadEventsEnabled, (bool))                      \
+    X(void, SDL_SetJoystickEventsEnabled, (bool))                     \
+    X(void, SDL_UpdateGamepads, (void))                               \
+    X(SDL_JoystickID*, SDL_GetGamepads, (int*))                       \
+    X(void, SDL_free, (void*))                                        \
+    X(SDL_Gamepad*, SDL_OpenGamepad, (SDL_JoystickID))                \
+    X(void, SDL_CloseGamepad, (SDL_Gamepad*))                         \
+    X(bool, SDL_GamepadConnected, (SDL_Gamepad*))                     \
+    X(SDL_JoystickID, SDL_GetGamepadID, (SDL_Gamepad*))               \
+    X(const char*, SDL_GetGamepadName, (SDL_Gamepad*))                \
+    X(bool, SDL_GetGamepadButton, (SDL_Gamepad*, SDL_GamepadButton))  \
+    X(Sint16, SDL_GetGamepadAxis, (SDL_Gamepad*, SDL_GamepadAxis))    \
+    X(bool, SDL_RumbleGamepad, (SDL_Gamepad*, Uint16, Uint16, Uint32))
+#define SDL_PTR(ret, name, args) static ret(SDLCALL* p##name) args;
+SDL_FNS(SDL_PTR)
+
+#define MAX_PADS 8
+#define SCAN_MS 500    /* how often controllers coming and going are looked for */
+#define RUMBLE_MS 1000 /* each rumble lasts this long unless sent again, */
+#define RESEND_MS 400  /* which it is this often while it should go on */
+static int sSdl;
+static CRITICAL_SECTION sPadLock;
+static SDL_Gamepad* sPads[MAX_PADS];
+static ULONGLONG sNextScan, sMotorSent;
+static WORD sMotor; /* the speed the motors should run at */
+
+static const struct {
+    SDL_GamepadButton b;
+    WORD bit;
+} kSdlButtons[] = {
+    {SDL_GAMEPAD_BUTTON_SOUTH, XPAD_A},           {SDL_GAMEPAD_BUTTON_EAST, XPAD_B},
+    {SDL_GAMEPAD_BUTTON_WEST, XPAD_X},            {SDL_GAMEPAD_BUTTON_NORTH, XPAD_Y},
+    {SDL_GAMEPAD_BUTTON_BACK, XPAD_BACK},         {SDL_GAMEPAD_BUTTON_START, XPAD_START},
+    {SDL_GAMEPAD_BUTTON_LEFT_STICK, XPAD_LTHUMB}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, XPAD_RTHUMB},
+    {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, XPAD_LB},  {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, XPAD_RB},
+    {SDL_GAMEPAD_BUTTON_DPAD_UP, XPAD_UP},        {SDL_GAMEPAD_BUTTON_DPAD_DOWN, XPAD_DOWN},
+    {SDL_GAMEPAD_BUTTON_DPAD_LEFT, XPAD_LEFT},    {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, XPAD_RIGHT},
+};
+
+static void sdl_init(void) {
+    wchar_t path[MAX_PATH];
+    wchar_t* slash;
+    HMODULE m;
+    DWORD n = GetModuleFileNameW(NULL, path, MAX_PATH);
+    if (!n || n >= MAX_PATH - 16 || !(slash = wcsrchr(path, L'\\'))) return;
+    wcscpy(slash + 1, L"SDL3.dll");
+    /* Its own folder searched for what it needs (vcruntime140.dll). */
+    m = LoadLibraryExW(path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!m) return;
+#define SDL_GET(ret, name, args)                                            \
+    if (!(p##name = (ret(SDLCALL*) args)(void*)GetProcAddress(m, #name))) { \
+        fprintf(stderr, "input: SDL3.dll has no %s\n", #name);              \
+        return;                                                             \
+    }
+    SDL_FNS(SDL_GET)
+    /* Read whether the window has focus or not, as XInput is, and kept up
+     * on a thread of SDL's own: nothing here handles its events. */
+    pSDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    pSDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
+    if (!pSDL_Init(SDL_INIT_GAMEPAD)) {
+        fprintf(stderr, "input: SDL3 couldn't start: %s\n", pSDL_GetError());
+        return;
+    }
+    pSDL_SetGamepadEventsEnabled(false);
+    pSDL_SetJoystickEventsEnabled(false);
+    InitializeCriticalSection(&sPadLock);
+    sSdl = 1;
+}
+
+/* Controllers let go of when gone, and opened when new (sPadLock held). */
+static void sdl_scan(void) {
+    int i, j, n = 0;
+    SDL_JoystickID* ids;
+    for (i = 0; i < MAX_PADS; i++) {
+        if (sPads[i] && !pSDL_GamepadConnected(sPads[i])) {
+            pSDL_CloseGamepad(sPads[i]);
+            sPads[i] = NULL;
+        }
+    }
+    ids = pSDL_GetGamepads(&n);
+    if (!ids) return;
+    for (j = 0; j < n; j++) {
+        int have = 0, free_ = -1;
+        for (i = 0; i < MAX_PADS; i++) {
+            if (sPads[i] && pSDL_GetGamepadID(sPads[i]) == ids[j]) have = 1;
+            else if (!sPads[i] && free_ < 0) free_ = i;
+        }
+        if (have || free_ < 0) continue;
+        if ((sPads[free_] = pSDL_OpenGamepad(ids[j]))) {
+            const char* name = pSDL_GetGamepadName(sPads[free_]);
+            fprintf(stderr, "input: controller: %s\n", name ? name : "(no name)");
+            if (sMotor) pSDL_RumbleGamepad(sPads[free_], sMotor, sMotor, RUMBLE_MS);
+        }
+    }
+    pSDL_free(ids);
+}
+
+/* The stick pushed further of this and the one so far, as XInput has it
+ * (up positive). */
+static void sdl_stick(SDL_Gamepad* g, SDL_GamepadAxis ax, SDL_GamepadAxis ay, SHORT* x, SHORT* y) {
+    int sx = pSDL_GetGamepadAxis(g, ax), sy = -(int)pSDL_GetGamepadAxis(g, ay);
+    if (sy > 32767) sy = 32767;
+    if (sx * sx + sy * sy > (int)*x * *x + (int)*y * *y) {
+        *x = (SHORT)sx;
+        *y = (SHORT)sy;
+    }
+}
+
+static int sdl_state(XPadState* s) {
+    ULONGLONG now = GetTickCount64();
+    int i, k, any = 0, resend;
+    EnterCriticalSection(&sPadLock);
+    pSDL_UpdateGamepads();
+    if (now >= sNextScan) {
+        sdl_scan();
+        sNextScan = now + SCAN_MS;
+    }
+    resend = sMotor && now - sMotorSent >= RESEND_MS;
+    if (resend) sMotorSent = now;
+    for (i = 0; i < MAX_PADS; i++) {
+        SDL_Gamepad* g = sPads[i];
+        int lt, rt;
+        if (!g) continue;
+        any = 1;
+        for (k = 0; k < (int)(sizeof(kSdlButtons) / sizeof(kSdlButtons[0])); k++) {
+            if (pSDL_GetGamepadButton(g, kSdlButtons[k].b)) s->Gamepad.wButtons |= kSdlButtons[k].bit;
+        }
+        lt = pSDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >> 7;
+        rt = pSDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >> 7;
+        if (lt > s->Gamepad.bLeftTrigger) s->Gamepad.bLeftTrigger = (BYTE)lt;
+        if (rt > s->Gamepad.bRightTrigger) s->Gamepad.bRightTrigger = (BYTE)rt;
+        sdl_stick(g, SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, &s->Gamepad.sThumbLX, &s->Gamepad.sThumbLY);
+        sdl_stick(g, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY, &s->Gamepad.sThumbRX, &s->Gamepad.sThumbRY);
+        if (resend) pSDL_RumbleGamepad(g, sMotor, sMotor, RUMBLE_MS);
+    }
+    LeaveCriticalSection(&sPadLock);
+    return any;
+}
+
+static void sdl_motors(WORD speed) {
+    int i;
+    EnterCriticalSection(&sPadLock);
+    sMotor = speed;
+    sMotorSent = GetTickCount64();
+    for (i = 0; i < MAX_PADS; i++) {
+        if (sPads[i]) pSDL_RumbleGamepad(sPads[i], speed, speed, speed ? RUMBLE_MS : 0);
+    }
+    LeaveCriticalSection(&sPadLock);
+}
+#else
+#define sSdl 0
+static int sdl_state(XPadState* s) { (void)s; return 0; }
+static void sdl_motors(WORD speed) { (void)speed; }
+#endif
+
+/* The controllers' state, as XInput's; 0 if there are none. */
+static int pad_state(XPadState* s) {
+    memset(s, 0, sizeof(*s));
+    if (sSdl) return sdl_state(s);
+    return pXInputGetState && pXInputGetState(0, s) == ERROR_SUCCESS;
+}
 
 static int has_focus(void) {
     DWORD pid = 0;
@@ -135,7 +313,7 @@ static float stick_axis(SHORT v) {
 static void read_sticks(float* lx, float* ly, float* rx, float* ry) {
     XPadState s;
     *lx = *ly = *rx = *ry = 0;
-    if (!pXInputGetState || pXInputGetState(0, &s) != ERROR_SUCCESS || menu_is_open()) return;
+    if (!pad_state(&s) || menu_is_open()) return;
     *lx = stick_axis(s.Gamepad.sThumbLX);
     *ly = stick_axis(s.Gamepad.sThumbLY);
     *rx = stick_axis(s.Gamepad.sThumbRX);
@@ -198,7 +376,7 @@ static uint32_t keyboard(void) {
 static void controller_state(uint32_t* buttons, uint32_t* stick) {
     XPadState s;
     *buttons = *stick = 0;
-    if (!pXInputGetState || pXInputGetState(0, &s) != ERROR_SUCCESS) return;
+    if (!pad_state(&s)) return;
     *buttons = s.Gamepad.wButtons;
     if (s.Gamepad.bLeftTrigger > 128) *buttons |= XPAD_LT;
     if (s.Gamepad.bRightTrigger > 128) *buttons |= XPAD_RT;
@@ -268,11 +446,12 @@ static void set_motors(int on) {
     static const WORD kSpeed[4] = {0, 0x3000, 0x6000, 0xC000};
     XPadVibration v;
     v.wLeftMotorSpeed = v.wRightMotorSpeed = on ? kSpeed[g_settings.rumble & 3] : 0;
-    pXInputSetState(0, &v);
+    if (sSdl) sdl_motors(v.wLeftMotorSpeed);
+    else pXInputSetState(0, &v);
 }
 
 static void rumble(int chan, int on) {
-    if (chan != 0 || !pXInputSetState) return;
+    if (chan != 0 || (!sSdl && !pXInputSetState)) return;
     sRumbling = on;
     set_motors(on);
 }
@@ -282,7 +461,7 @@ static void rumble(int chan, int on) {
 static ULONGLONG sPreviewEnd;
 
 void input_rumble_preview(void) {
-    if (!pXInputSetState) return;
+    if (!sSdl && !pXInputSetState) return;
     set_motors(1);
     sPreviewEnd = GetTickCount64() + 200;
 }
@@ -304,6 +483,9 @@ void input_init(void) {
         pXInputGetState = (DWORD(WINAPI*)(DWORD, XPadState*))(void*)GetProcAddress(x, "XInputGetState");
         pXInputSetState = (DWORD(WINAPI*)(DWORD, XPadVibration*))(void*)GetProcAddress(x, "XInputSetState");
     }
+#ifdef RECOMP_SDL3
+    sdl_init();
+#endif
     g_host_pad_read = read_pad;
     g_host_script_input = script_input;
     g_host_pad_rumble = rumble;
