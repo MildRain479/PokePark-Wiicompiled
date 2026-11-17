@@ -965,10 +965,17 @@ static VkPipeline pipeline(int kind, uint32_t key) {
     return p->p;
 }
 
+/* Binding another pipeline: the culling and depth state set again, at
+ * the next draw that sets them, though they are dynamic and should carry
+ * over. On an Adreno 740 they didn't: the pipeline's own (no culling) came
+ * back, and the shell drawn around Rotom for his outline, culled to show
+ * only its edge, covered him in its blue. */
 static void use_pipeline(VkPipeline p) {
     if (sCmd.pipe != p) {
         vkCmdBindPipeline(S->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
         sCmd.pipe = p;
+        sCmd.cull = sCmd.dtest = sCmd.dwrite = sCmd.dfunc = -1;
+        vkCmdSetFrontFace(S->cb, VK_FRONT_FACE_COUNTER_CLOCKWISE);
     }
 }
 
