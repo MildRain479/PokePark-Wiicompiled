@@ -136,7 +136,13 @@ static LONG CALLBACK on_fault(EXCEPTION_POINTERS* info) {
         if (a < (uintptr_t)g_mem || a >= (uintptr_t)g_mem + 0x40000000u) return EXCEPTION_CONTINUE_SEARCH;
         fprintf(stderr, "boot: guest memory fault at physical %08X (%s)\n", (unsigned)(a - (uintptr_t)g_mem),
                 r->ExceptionInformation[0] ? "write" : "read");
-        if (gCpu) ppc_backtrace(gCpu);
+        if (gCpu) {
+            int i;
+            for (i = 0; i < 32; i += 4)
+                fprintf(stderr, "  r%-2d %08X %08X %08X %08X\n", i, gCpu->r[i], gCpu->r[i + 1], gCpu->r[i + 2],
+                        gCpu->r[i + 3]);
+            ppc_backtrace(gCpu);
+        }
         ppc_dump_trace();
         fflush(stderr);
         ExitProcess(3);

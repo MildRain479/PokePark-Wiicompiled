@@ -159,10 +159,14 @@ static int timer_due(void) {
     return -1;
 }
 
+/* Set while a completion's after-step runs (free_request's iosFree, which
+ * IOS does inside its interrupt). */
+static int sInAfter;
+
 void hle_deliver(ppc_t* c) {
     /* Interrupts are off inside a handler; a thread the handler switched
      * to takes them as usual. */
-    if (hle_in_interrupt()) return;
+    if (hle_in_interrupt() || sInAfter) return;
     for (;;) {
         if (sHead != sTail) {
             Pending p = sQueue[sHead++ % QUEUE_SIZE];
@@ -174,7 +178,18 @@ void hle_deliver(ppc_t* c) {
             }
             HLE_LOG("interrupt: %08X [%s](%08X, %08X)", p.fn, ppc_func_name(p.fn), p.r3, p.r4);
             if (p.fn) hle_interrupt(c, p.fn, p.r3, p.r4);
-            if (p.after) p.after(c, p.data);
+            if (p.after) {
+                /* With interrupts still off, as on the console. Taken from
+                 * the iosFree it calls, the next completion ran inside
+                 * that call: a chain of disc commands, each queued by the
+                 * last one's callback, went 0x220 bytes deeper a command
+                 * until the thread ran off its stack into the memory below
+                 * (the sound mixer's channels, the disc library's
+                 * contexts), and the ending movie hung or crashed. */
+                sInAfter = 1;
+                p.after(c, p.data);
+                sInAfter = 0;
+            }
             continue;
         }
         /* Timed events that are due, oldest first. After a stall several
