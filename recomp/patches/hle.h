@@ -34,6 +34,9 @@ double hle_vi_hz(void);
 
 /* What remote 0 had held at its last read (HOST_PAD_*). */
 uint32_t hle_wpad_held(void);
+/* The remote's buttons (WPAD_*) as the game's menus have them bound
+ * (g_host_menu_read), at the last read; hle_menu_input.c. */
+uint32_t hle_wpad_menu_buttons(void);
 
 /* Whether the console is set up for a 16:9 TV (the aspect ratio setting,
  * or RECOMP_WIDESCREEN: 1, 0 for 4:3). The game then draws 16:9 pictures squeezed into its
@@ -41,6 +44,7 @@ uint32_t hle_wpad_held(void);
 int hle_widescreen(void);
 /* hle_game.c: whether the scene is a minigame (an attraction). */
 int hle_in_minigame(void);
+int hle_minigame_text(void);
 /* hle_game.c: the minigame being played (its At number, 1-16), or 0. */
 int hle_minigame(void);
 /* hle_game.c: enters minigame at (1-16) for testing, from the park. */
@@ -83,6 +87,8 @@ int hle_dvd_init_image(const uint8_t* boot, const uint8_t* fst, uint32_t fstSize
 void hle_dvd_boot_setup(void);
 void hle_text_boot_setup(void);
 int hle_dvd_read(uint64_t offset, uint32_t len, uint32_t dst);
+int hle_dvd_overlay(const char* dir);
+const char* hle_dvd_root(void);
 uint32_t hle_dvd_tmd(uint32_t dst, uint32_t max);
 const uint8_t* hle_dvd_disc_id(void);
 

@@ -13,9 +13,12 @@
 
 #include "gx.h"
 #include "recomp_funcs.h"
+#include "host_settings.h"
+#include "langpack.h"
 
 int hle_dvd_init(const char* root);
 void hle_dvd_boot_setup(void);
+int hle_dvd_overlay(const char* dir);
 void hle_text_boot_setup(void);
 void hle_nand_set_root(const char* root);
 #ifdef __ANDROID__
@@ -698,6 +701,24 @@ int main(int argc, char** argv) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #endif
     settings_load();
+    /* The text and cries of another language, from its pack (the FST is
+     * changed before the game reads it). */
+    {
+        char dir[1100];
+        int lang;
+        /* A pack made while the game used the one before it (langpack.h). */
+        for (lang = 0; lang < LANGUAGES; lang++)
+            if (lang != LANGUAGE_EN) langpack_promote(lang);
+        if (g_settings.language != LANGUAGE_EN) {
+            snprintf(dir, sizeof(dir), "%s/text", settings_language_dir(g_settings.language));
+            if (hle_dvd_overlay(dir)) g_language_started = g_settings.language;
+        }
+        if (g_settings.cries != LANGUAGE_EN) {
+            snprintf(dir, sizeof(dir), "%s/cries", settings_language_dir(g_settings.cries));
+            if (hle_dvd_overlay(dir)) g_cries_started = g_settings.cries;
+        }
+    }
+    if (getenv("RECOMP_LANGPACK_IMAGE")) langpack_choose(); /* tests: making a pack as the game runs */
     update_check();
     gx_init();
     input_init();

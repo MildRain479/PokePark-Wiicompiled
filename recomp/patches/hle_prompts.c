@@ -17,7 +17,7 @@
 #include "hle.h"
 #include "host_input.h"
 
-int (*g_host_prompt_icon)(uint32_t button, uint8_t* coverage, int w, int h);
+int (*g_host_prompt_icon)(uint32_t button, int layer, uint8_t* coverage, int w, int h);
 uint32_t (*g_host_prompt_generation)(void);
 
 #define FIRST_ICON 0xE041 /* the d-pad; then A, B, HOME, +, -, 1, 2 */
@@ -40,6 +40,10 @@ typedef struct {
 static Font sFonts[MAX_FONTS];
 static int sFontCount;
 static uint32_t sGeneration = 0xFFFFFFFFu;
+/* The glyphs' layer (host_input.h's LAYER_*): the minigames' in their
+ * lobbies and the minigames themselves, where the instructions are; the
+ * park's elsewhere (dialogue, signs). */
+static int sGlyphLayer;
 
 /* A pixel of a 4-bit (I4) sheet: 8x8 tiles of 32 bytes, row by row. */
 static uint32_t i4_byte(const Font* f, int sheet, int x, int y) {
@@ -112,7 +116,7 @@ static void draw_icons(Font* f) {
         ox = (f->width[i] - s) / 2;
         oy = f->baseline - s - 1;
         if (oy < 0) oy = 0;
-        if (s > 0 && s * s <= MAX_CELL && g_host_prompt_icon) drew = g_host_prompt_icon(kButton[i], cov, s, s);
+        if (s > 0 && s * s <= MAX_CELL && g_host_prompt_icon) drew = g_host_prompt_icon(kButton[i], sGlyphLayer, cov, s, s);
         for (y = 0; y < f->ch; y++) {
             for (x = 0; x < f->cw; x++) {
                 int v = f->original[i][y * f->cw + x];
@@ -210,10 +214,11 @@ static const struct Kind {
     const Spot* spots;
     int spotCount;
     uint32_t line; /* the key's outline, 0xRRGGBB, or ~0u for the button's colour */
+    int layer;     /* whose buttons it shows (LAYER_*): the menus' (the bar, the title), the park's (talk) */
 } kKinds[] = {
-    {"KeyButton", 256, 256, kBarSpots, (int)(sizeof(kBarSpots) / sizeof(kBarSpots[0])), ~0u},
-    {"FukidashiMini", 256, 128, kBubbleSpots, (int)(sizeof(kBubbleSpots) / sizeof(kBubbleSpots[0])), 0x414141},
-    {"TitleParts", 512, 128, kTitleSpots, (int)(sizeof(kTitleSpots) / sizeof(kTitleSpots[0])), 0x414141},
+    {"KeyButton", 256, 256, kBarSpots, (int)(sizeof(kBarSpots) / sizeof(kBarSpots[0])), ~0u, 1},
+    {"FukidashiMini", 256, 128, kBubbleSpots, (int)(sizeof(kBubbleSpots) / sizeof(kBubbleSpots[0])), 0x414141, 0},
+    {"TitleParts", 512, 128, kTitleSpots, (int)(sizeof(kTitleSpots) / sizeof(kTitleSpots[0])), 0x414141, 1},
 };
 #define KINDS ((int)(sizeof(kKinds) / sizeof(kKinds[0])))
 
@@ -283,7 +288,7 @@ static void draw_spot(Picture* b, const Spot* spot) {
      * the game's cross, which says "directions" as well, stays. (The
      * generation's low bit: the controller was used last.) */
     if (!g_host_prompt_icon || (spot->button == HOST_PAD_SCREEN_UP && !(sGeneration & 1)) ||
-        !g_host_prompt_icon(spot->button, cov, s, s)) {
+        !g_host_prompt_icon(spot->button, b->kind->layer, cov, s, s)) {
         for (y = 0; y < h; y++) {
             for (x = 0; x < w; x++) ST8(ci8_byte(b->image, W, x0 + x, y0 + y), b->original[(y0 + y) * W + x0 + x]);
         }
@@ -437,8 +442,9 @@ void hle_prompts_update(void) {
     int i;
     if ((!sFontCount && !sPictureCount) || !g_host_prompt_generation) return;
     gen = g_host_prompt_generation();
-    if (gen == sGeneration) return;
+    if (gen == sGeneration && hle_minigame_text() * 2 == sGlyphLayer) return;
     sGeneration = gen;
+    sGlyphLayer = hle_minigame_text() * 2; /* LAYER_GAMES, or LAYER_PARK */
     for (i = 0; i < sFontCount; i++) draw_icons(&sFonts[i]);
     draw_pictures();
 }

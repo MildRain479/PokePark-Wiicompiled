@@ -11,6 +11,8 @@
 
     <!-- The update check asks GitHub for the latest release (update.c). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Rumble: the controller's motor, or the handheld's (input_android.c). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Vulkan 1.3 draws; nothing else can. -->
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="true" />

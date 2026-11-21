@@ -21,6 +21,10 @@
  * thread reads them at each poll. */
 #include <android/input.h>
 #include <android/keycodes.h>
+#include <android/looper.h>
+#include <android/sensor.h>
+#include <android_native_app_glue.h>
+#include <jni.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -30,6 +34,7 @@
 
 #include "host_input.h"
 #include "host_settings.h"
+#include "motion.h"
 
 int hle_font_metrics(int* cellW, int* cellH, int* baseline); /* hle_prompts.c */
 int hle_font_glyph(uint16_t code, uint8_t* cov, int* left, int* advance);
@@ -165,6 +170,8 @@ static void touch_event(AInputEvent* e) {
     }
 }
 
+static int32_t sPadDevice = -1; /* the controller a button was pressed on last */
+
 int input_android_event(AInputEvent* e) {
     int32_t source = AInputEvent_getSource(e);
     int used = 0;
@@ -174,6 +181,7 @@ int input_android_event(AInputEvent* e) {
         uint32_t bit = key_bit(code);
         if (code == AKEYCODE_BACK && !(source & (AINPUT_SOURCE_GAMEPAD | AINPUT_SOURCE_JOYSTICK))) bit = 0;
         if (bit) {
+            if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN) sPadDevice = AInputEvent_getDeviceId(e);
             if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN) sPadButtons |= bit;
             else if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_UP) sPadButtons &= ~bit;
         }
@@ -333,7 +341,7 @@ static void touches(int w, int h) {
 }
 
 static float stick_axis(float v) {
-    const float kDead = 0.24f; /* about XInput's */
+    float kDead = g_settings.stick_dead_zone / 100.0f;
     if (v > kDead) return (v - kDead) / (1 - kDead);
     if (v < -kDead) return (v + kDead) / (1 - kDead);
     return 0;
@@ -344,29 +352,48 @@ static float stick_axis(float v) {
 /* The controller's buttons (XPAD_*), and the left stick's directions as
  * d-pad bits. Under the lock. */
 static void controller_state(uint32_t* buttons, uint32_t* stick) {
-    *buttons = sPadButtons | sPadHat;
+    *buttons = settings_face_swap(sPadButtons) | sPadHat;
     *stick = (sAxis[1] < -STICK_THRESHOLD ? XPAD_UP : 0) | (sAxis[1] > STICK_THRESHOLD ? XPAD_DOWN : 0) |
              (sAxis[0] < -STICK_THRESHOLD ? XPAD_LEFT : 0) | (sAxis[0] > STICK_THRESHOLD ? XPAD_RIGHT : 0);
 }
 
-static const uint32_t kActionBit[ACT_COUNT] = {
+static const uint32_t kActionBit[BIND_COUNT] = {
     HOST_PAD_SCREEN_UP, HOST_PAD_SCREEN_DOWN, HOST_PAD_SCREEN_LEFT, HOST_PAD_SCREEN_RIGHT,
     HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, HOST_PAD_PLUS, HOST_PAD_MINUS, HOST_PAD_HOME, HOST_PAD_SHAKE, HOST_PAD_SHAKE2,
+    HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, /* the menus' */
+    HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, /* the minigames' */
 };
+/* What the menus and minigames have bound apart; the park's don't count there. */
+#define LAYER_OWN (HOST_PAD_2 | HOST_PAD_1 | HOST_PAD_A | HOST_PAD_B)
 
-static uint32_t controller(uint32_t b, uint32_t stick) {
-    uint32_t held = 0;
+/* Action i, bound to something held, as each layer (LAYER_*) takes it. */
+static void action_held(int i, uint32_t held[LAYERS]) {
+    int l;
+    if (i >= ACT_COUNT) held[ACT_LAYER(i)] |= kActionBit[i];
+    else {
+        for (l = 0; l < LAYERS; l++)
+            if (l == LAYER_PARK || !(kActionBit[i] & LAYER_OWN)) held[l] |= kActionBit[i];
+    }
+}
+
+/* The buttons held in each layer (LAYER_*), from the controller. */
+static void controller(uint32_t b, uint32_t stick, uint32_t held[LAYERS]) {
+    uint32_t dirs = 0;
     int i, k;
-    for (i = 0; i < ACT_COUNT; i++) {
+    for (i = 0; i < LAYERS; i++) held[i] = 0;
+    for (i = 0; i < BIND_COUNT; i++) {
         for (k = 0; k < BIND_SLOTS; k++) {
-            if (b & g_settings.pad[i][k]) held |= kActionBit[i];
+            if (b & g_settings.pad[i][k]) {
+                action_held(i, held);
+                break;
+            }
         }
     }
-    if (stick & XPAD_UP) held |= HOST_PAD_SCREEN_UP;
-    if (stick & XPAD_DOWN) held |= HOST_PAD_SCREEN_DOWN;
-    if (stick & XPAD_LEFT) held |= HOST_PAD_SCREEN_LEFT;
-    if (stick & XPAD_RIGHT) held |= HOST_PAD_SCREEN_RIGHT;
-    return held;
+    if (stick & XPAD_UP) dirs |= HOST_PAD_SCREEN_UP;
+    if (stick & XPAD_DOWN) dirs |= HOST_PAD_SCREEN_DOWN;
+    if (stick & XPAD_LEFT) dirs |= HOST_PAD_SCREEN_LEFT;
+    if (stick & XPAD_RIGHT) dirs |= HOST_PAD_SCREEN_RIGHT;
+    for (i = 0; i < LAYERS; i++) held[i] |= dirs;
 }
 
 int input_controller_last(void) {
@@ -378,9 +405,26 @@ int input_controller_last(void) {
     return forced || sControllerLast;
 }
 
+/* The buttons held at the last read, as the menus and the minigames have
+ * them bound. */
+static uint32_t sMenuHeld, sGameHeld;
+
+static int read_menu(int chan, uint32_t* held) {
+    *held = sMenuHeld;
+    return chan == 0;
+}
+
+static int read_game(int chan, uint32_t* held) {
+    *held = sGameHeld;
+    return chan == 0;
+}
+
+static void sensors_poll(void);
+static void rumble_tick(void);
+
 static int read_pad(int chan, uint32_t* held) {
     static int menuHeld;
-    uint32_t buttons, stick, pad;
+    uint32_t buttons, stick, pad[LAYERS], touch;
     int w, h;
     if (chan != 0) return 0;
     game_screen_size(&w, &h);
@@ -389,14 +433,20 @@ static int read_pad(int chan, uint32_t* held) {
     touches(w, h);
     pthread_mutex_unlock(&sLock);
     options_controller(buttons, buttons | stick);
-    pad = controller(buttons, stick);
-    if (pad || stick_axis(sAxis[2]) != 0 || stick_axis(sAxis[3]) != 0) sControllerLast = 1;
+    sensors_poll();
+    rumble_tick();
+    controller(buttons, stick, pad);
+    if (pad[0] | pad[1] | pad[2] || stick_axis(sAxis[2]) != 0 || stick_axis(sAxis[3]) != 0) sControllerLast = 1;
     /* The touch controls work the tab as a remote's buttons would: - on
-     * the save file screen opens it. */
-    *held = pad | (options_touch_buttons(sTouchHeld) ? 0 : sTouchHeld);
+     * the save file screen opens it. They're the remote's buttons, in the
+     * menus too. */
+    touch = options_touch_buttons(sTouchHeld) ? 0 : sTouchHeld;
+    *held = pad[LAYER_PARK] | touch;
+    sMenuHeld = pad[LAYER_MENUS] | touch;
+    sGameHeld = pad[LAYER_GAMES] | touch;
     if (menu_is_open()) menuHeld = 1;
-    else if (menuHeld && !*held) menuHeld = 0;
-    if (menuHeld) *held = 0;
+    else if (menuHeld && !*held && !sMenuHeld && !sGameHeld) menuHeld = 0;
+    if (menuHeld) *held = sMenuHeld = sGameHeld = 0;
     return 1;
 }
 
@@ -428,8 +478,10 @@ static void read_mouse(float* dx, float* dy) {
     if (dt > 0.1f) dt = 0.1f;
     last = now;
     read_sticks(&lx, &ly, &rx, &ry);
-    *dx = sCamX * g_settings.mouse_sensitivity + rx * LOOK_STICK_PIXELS_PER_SECOND * dt;
-    *dy = (sCamY * g_settings.mouse_sensitivity - ry * LOOK_STICK_PIXELS_PER_SECOND * dt) * (g_settings.invert_tilt ? -1 : 1);
+    *dx = (sCamX * g_settings.mouse_sensitivity + rx * LOOK_STICK_PIXELS_PER_SECOND * g_settings.stick_speed * dt) *
+          (g_settings.invert_turn ? -1 : 1);
+    *dy = (sCamY * g_settings.mouse_sensitivity - ry * LOOK_STICK_PIXELS_PER_SECOND * g_settings.stick_speed * dt) *
+          (g_settings.invert_tilt ? -1 : 1);
     sCamX = sCamY = 0;
 }
 
@@ -439,24 +491,293 @@ static void read_pointer(float* dx, float* dy) {
     sPtrX = sPtrY = 0;
 }
 
-/* No rumble yet: Android's is the controller's vibrator, through Java. */
-static void rumble(int chan, int on) {
-    (void)chan;
-    (void)on;
+/* Rumble: the vibrator of the controller pressed last (InputDevice's),
+ * or else the handheld's own, through Java on the game thread. Each buzz
+ * lasts RUMBLE_MS unless sent again, which it is every RESEND_MS while the
+ * game keeps the motor on (at each pad read), so a lost "off" can't leave
+ * it going. */
+extern struct android_app* g_android_app; /* window_android.c */
+
+#define RUMBLE_MS 1000
+#define RESEND_MS 400
+#define PREVIEW_MS 150
+
+static jobject sGameAudio; /* AudioAttributes for a game's vibration (a global reference) */
+static jobject sVibrator;        /* a global reference */
+static int32_t sVibratorDevice = -2; /* the device it is for (-1: the handheld's) */
+static int sRumbleOn;
+static double sRumbleSent, sPreviewEnd;
+
+static JNIEnv* jni(void) {
+    JNIEnv* env;
+    if (!g_android_app || (*g_android_app->activity->vm)->AttachCurrentThread(g_android_app->activity->vm, &env, NULL))
+        return NULL;
+    return env;
 }
 
-void input_rumble_preview(void) {}
+static int jni_failed(JNIEnv* env) {
+    if (!(*env)->ExceptionCheck(env)) return 0;
+    (*env)->ExceptionClear(env);
+    return 1;
+}
+
+/* The vibrator to use: the controller's if it has one, else the device's. */
+static jobject vibrator(JNIEnv* env) {
+    int32_t id = sPadDevice;
+    jobject v = NULL;
+    jclass vc = (*env)->FindClass(env, "android/os/Vibrator");
+    if (id == sVibratorDevice) return sVibrator;
+    if (sVibrator) (*env)->DeleteGlobalRef(env, sVibrator);
+    sVibrator = NULL;
+    sVibratorDevice = id;
+    if (!vc) return jni_failed(env), NULL;
+    if (id >= 0) {
+        jclass ic = (*env)->FindClass(env, "android/view/InputDevice");
+        jobject dev = ic ? (*env)->CallStaticObjectMethod(env, ic, (*env)->GetStaticMethodID(env, ic, "getDevice", "(I)Landroid/view/InputDevice;"), id) : NULL;
+        if (dev) v = (*env)->CallObjectMethod(env, dev, (*env)->GetMethodID(env, ic, "getVibrator", "()Landroid/os/Vibrator;"));
+        if (jni_failed(env)) v = NULL;
+        if (v && !(*env)->CallBooleanMethod(env, v, (*env)->GetMethodID(env, vc, "hasVibrator", "()Z"))) v = NULL;
+    }
+    if (!v) {
+        jobject act = g_android_app->activity->clazz;
+        jclass cc = (*env)->GetObjectClass(env, act);
+        jstring name = (*env)->NewStringUTF(env, "vibrator");
+        v = (*env)->CallObjectMethod(env, act, (*env)->GetMethodID(env, cc, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"), name);
+        if (jni_failed(env)) v = NULL;
+        if (v && !(*env)->CallBooleanMethod(env, v, (*env)->GetMethodID(env, vc, "hasVibrator", "()Z"))) v = NULL;
+    }
+    if (v) sVibrator = (*env)->NewGlobalRef(env, v);
+    jni_failed(env);
+    return sVibrator;
+}
+
+/* A buzz of ms at the rumble setting's strength, or 0: stopped. */
+static void vibrate(int ms) {
+    static const int kAmplitude[4] = {0, 80, 160, 255};
+    JNIEnv* env = jni();
+    jobject v;
+    jclass vc, ec;
+    if (!env || !(v = vibrator(env))) return;
+    vc = (*env)->FindClass(env, "android/os/Vibrator");
+    if (ms <= 0 || !g_settings.rumble) {
+        (*env)->CallVoidMethod(env, v, (*env)->GetMethodID(env, vc, "cancel", "()V"));
+    } else {
+        int amp = kAmplitude[g_settings.rumble & 3];
+        jobject effect;
+        ec = (*env)->FindClass(env, "android/os/VibrationEffect");
+        if (!(*env)->CallBooleanMethod(env, v, (*env)->GetMethodID(env, vc, "hasAmplitudeControl", "()Z")))
+            amp = -1; /* DEFAULT_AMPLITUDE */
+        effect = (*env)->CallStaticObjectMethod(env, ec, (*env)->GetStaticMethodID(env, ec, "createOneShot", "(JI)Landroid/os/VibrationEffect;"),
+                                                (jlong)ms, (jint)amp);
+        if (effect && !sGameAudio) {
+            /* As a game's (AudioAttributes.USAGE_GAME), not a touch's:
+             * turning touch feedback off doesn't stop it. */
+            jclass bc = (*env)->FindClass(env, "android/media/AudioAttributes$Builder");
+            jobject b = bc ? (*env)->NewObject(env, bc, (*env)->GetMethodID(env, bc, "<init>", "()V")) : NULL;
+            if (b) {
+                (*env)->CallObjectMethod(env, b, (*env)->GetMethodID(env, bc, "setUsage", "(I)Landroid/media/AudioAttributes$Builder;"), 14);
+                b = (*env)->CallObjectMethod(env, b, (*env)->GetMethodID(env, bc, "build", "()Landroid/media/AudioAttributes;"));
+                if (b && !jni_failed(env)) sGameAudio = (*env)->NewGlobalRef(env, b);
+            }
+            jni_failed(env);
+        }
+        if (effect && sGameAudio)
+            (*env)->CallVoidMethod(env, v,
+                                   (*env)->GetMethodID(env, vc, "vibrate", "(Landroid/os/VibrationEffect;Landroid/media/AudioAttributes;)V"),
+                                   effect, sGameAudio);
+        else if (effect)
+            (*env)->CallVoidMethod(env, v, (*env)->GetMethodID(env, vc, "vibrate", "(Landroid/os/VibrationEffect;)V"), effect);
+    }
+    jni_failed(env);
+}
+
+static void rumble(int chan, int on) {
+    if (chan != 0 || on == sRumbleOn) return;
+    sRumbleOn = on;
+    sRumbleSent = now_seconds();
+    vibrate(on ? RUMBLE_MS : 0);
+}
+
+/* At each pad read: the buzz kept going while it should be, and the
+ * preview's ended. */
+static void rumble_tick(void) {
+    double now = now_seconds();
+    if (sPreviewEnd && now >= sPreviewEnd) {
+        sPreviewEnd = 0;
+        if (!sRumbleOn) vibrate(0);
+    }
+    if (sRumbleOn && now - sRumbleSent >= RESEND_MS / 1000.0) {
+        sRumbleSent = now;
+        vibrate(RUMBLE_MS);
+    }
+}
+
+/* A short buzz at the new strength, when the setting is changed. */
+void input_rumble_preview(void) {
+    if (sRumbleOn) return;
+    vibrate(PREVIEW_MS);
+    sPreviewEnd = now_seconds() + PREVIEW_MS / 1000.0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* The handheld's own motion sensors, for the minigames (motion.h): on
+ * while they want them, read on the game thread at each pad read. */
+
+extern struct android_app* g_android_app; /* window_android.c */
+
+static ASensorManager* sSensorManager;
+static const ASensor *sAccel, *sGyro;
+static ASensorEventQueue* sSensorQueue;
+static int sSensorsOn, sRotation;
+
+static void sensors_find(void) {
+    static int tried;
+    if (tried) return;
+    tried = 1;
+    sSensorManager = ASensorManager_getInstanceForPackage("io.github.pokeparkrecomp");
+    if (!sSensorManager) return;
+    sAccel = ASensorManager_getDefaultSensor(sSensorManager, ASENSOR_TYPE_ACCELEROMETER);
+    sGyro = ASensorManager_getDefaultSensor(sSensorManager, ASENSOR_TYPE_GYROSCOPE);
+}
+
+/* A device's USB vendor (InputDevice.getVendorId), or 0. */
+static int device_vendor(int32_t id) {
+    JNIEnv* env;
+    jclass cls;
+    jobject dev;
+    int v = 0;
+    if (!g_android_app || (*g_android_app->activity->vm)->AttachCurrentThread(g_android_app->activity->vm, &env, NULL))
+        return 0;
+    cls = (*env)->FindClass(env, "android/view/InputDevice");
+    if (cls) {
+        dev = (*env)->CallStaticObjectMethod(env, cls, (*env)->GetStaticMethodID(env, cls, "getDevice", "(I)Landroid/view/InputDevice;"), id);
+        if (dev) v = (*env)->CallIntMethod(env, dev, (*env)->GetMethodID(env, cls, "getVendorId", "()I"));
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        v = 0;
+    }
+    return v;
+}
+
+int input_pad_family(void) {
+    static int32_t known = -2;
+    static int family = PAD_ICONS_XBOX;
+    int32_t id = sPadDevice;
+    if (id != known) {
+        int v = id >= 0 ? device_vendor(id) : 0;
+        family = v == 0x054C ? PAD_ICONS_PLAYSTATION : v == 0x057E ? PAD_ICONS_NINTENDO : PAD_ICONS_XBOX;
+        known = id;
+    }
+    return family;
+}
+
+int input_has_gyro(void) {
+    sensors_find();
+    return sAccel && sGyro;
+}
+
+/* The screen's turn from the device's own way up (Surface.ROTATION_*):
+ * the sensors' axes are the device's. */
+static int display_rotation(void) {
+    JNIEnv* env;
+    jobject act;
+    jclass cls;
+    jobject wm, display;
+    int r = 0;
+    if (!g_android_app || (*g_android_app->activity->vm)->AttachCurrentThread(g_android_app->activity->vm, &env, NULL))
+        return 0;
+    act = g_android_app->activity->clazz;
+    cls = (*env)->GetObjectClass(env, act);
+    wm = (*env)->CallObjectMethod(env, act, (*env)->GetMethodID(env, cls, "getWindowManager", "()Landroid/view/WindowManager;"));
+    if (wm) {
+        jclass wmc = (*env)->GetObjectClass(env, wm);
+        display = (*env)->CallObjectMethod(env, wm, (*env)->GetMethodID(env, wmc, "getDefaultDisplay", "()Landroid/view/Display;"));
+        if (display) {
+            jclass dc = (*env)->GetObjectClass(env, display);
+            r = (*env)->CallIntMethod(env, display, (*env)->GetMethodID(env, dc, "getRotation", "()I"));
+        }
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        r = 0;
+    }
+    return r & 3;
+}
+
+/* A sensor's reading, in the device's axes, in the controller's (motion.h):
+ * x across the screen to the right, y out of it, z down it. */
+static void device_to_pad(const float d[3], float out[3]) {
+    float sx, sy;
+    switch (sRotation) {
+    case 1: sx = -d[1]; sy = d[0]; break;
+    case 2: sx = -d[0]; sy = -d[1]; break;
+    case 3: sx = d[1]; sy = -d[0]; break;
+    default: sx = d[0]; sy = d[1];
+    }
+    out[0] = sx;
+    out[1] = d[2];
+    out[2] = -sy;
+}
+
+static void sensors_poll(void) {
+    static int64_t lastAccel, lastGyro;
+    double now = now_seconds();
+    int want = motion_wanted(now) && input_has_gyro();
+    ASensorEvent ev[16];
+    ssize_t n, i;
+    if (want && !sSensorQueue) {
+        ALooper* looper = ALooper_forThread();
+        if (!looper) looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
+        sSensorQueue = ASensorManager_createEventQueue(sSensorManager, looper, 0x5E45, NULL, NULL);
+        if (!sSensorQueue) return;
+    }
+    if (want != sSensorsOn && sSensorQueue) {
+        if (want) {
+            sRotation = display_rotation();
+            ASensorEventQueue_registerSensor(sSensorQueue, sAccel, 10000, 0);
+            ASensorEventQueue_registerSensor(sSensorQueue, sGyro, 5000, 0);
+            lastAccel = lastGyro = 0;
+        } else {
+            ASensorEventQueue_disableSensor(sSensorQueue, sAccel);
+            ASensorEventQueue_disableSensor(sSensorQueue, sGyro);
+            motion_off();
+        }
+        sSensorsOn = want;
+    }
+    if (!sSensorsOn) return;
+    while ((n = ASensorEventQueue_getEvents(sSensorQueue, ev, 16)) > 0) {
+        for (i = 0; i < n; i++) {
+            float v[3];
+            device_to_pad(ev[i].data, v);
+            if (ev[i].type == ASENSOR_TYPE_ACCELEROMETER) {
+                motion_accel(v, lastAccel ? (ev[i].timestamp - lastAccel) * 1e-9f : 0, now);
+                lastAccel = ev[i].timestamp;
+            } else if (ev[i].type == ASENSOR_TYPE_GYROSCOPE) {
+                motion_gyro(v, lastGyro ? (ev[i].timestamp - lastGyro) * 1e-9f : 0, now);
+                lastGyro = ev[i].timestamp;
+            }
+        }
+    }
+}
+
+static int read_gyro(float* yaw, float* pitch) { return motion_gyro_read(yaw, pitch, now_seconds()); }
+static int read_tilt(float* roll, float* pitch) { return motion_tilt_read(roll, pitch, now_seconds()); }
 
 static int script_input(uint32_t held) { return options_script(held) || menu_is_open(); }
 
 void input_init(void) {
     g_host_pad_read = read_pad;
+    g_host_menu_read = read_menu;
+    g_host_game_read = read_game;
     g_host_script_input = script_input;
     g_host_pad_rumble = rumble;
     g_host_mouse_read = read_mouse;
     prompts_init();
     g_host_pointer_read = read_pointer;
     g_host_sticks_read = read_sticks;
+    g_host_gyro_read = read_gyro;
+    g_host_tilt_read = read_tilt;
 }
 
 /* ------------------------------------------------------------------------ */

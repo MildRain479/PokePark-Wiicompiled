@@ -33,6 +33,9 @@
 0x8022FB90 __AXGetAuxBOutput  # hle_audio.c: where the DSP mixes the aux buses
 0x8022FC30 __AXGetAuxCInput  # hle_audio.c: where the DSP mixes the aux buses
 0x8022FC70 __AXGetAuxCOutput  # hle_audio.c: where the DSP mixes the aux buses
+0x801E98B0 SoundArchiveLoader_LoadGroup  # hle_audio.c: says when a group doesn't fit
+0x801EA920 SoundArchivePlayer_SetupSoundPlayer  # hle_audio.c: where the players are
+0x801DC720 BasicSound_UpdateParam  # hle_audio.c: music, effects and cries volumes
 0x801741F0 fn_801741F0  # hle_game.c: logs scene changes
 0x80173E10 SceneSpecializerStrap::RunSystem  # hle_game.c: leave as soon as the park has loaded
 0x8016ED00 SceneSpecializerHold::RunUpdate  # hle_game.c: Hold ends on its first frame
@@ -116,3 +119,9 @@
 0x80195F70 fn_80195F70  # hle_lookup.c: resources by name, found natively (area loads)
 0x80196200 fn_80196200  # hle_lookup.c: the same, the other kind
 0x80196030 fn_80196030  # hle_lookup.c: resources by number, found natively
+0x80104EE0 fn_80104EE0  # hle_game.c: RECOMP_STAFF_ROLL, the staff roll started (tests)
+0x80254310 KPADiRead  # hle_menu_input.c: the menus' buttons, held, pressed and let go, at each read
+0x80034D60 fn_80034D60  # hle_menu_input.c: GetKPADStatus, the menus' buttons in it for fn_8012A7F0
+0x8012A7F0 fn_8012A7F0  # hle_menu_input.c: the menus' reading of the remote; the status put back after
+0x80034D50 fn_80034D50  # hle_menu_input.c: GetPadState, whether Pikachu is reading the pad
+0x80170910 fn_80170910  # hle_menu_input.c: RunPause, the menus' buttons in it while the Pad is up

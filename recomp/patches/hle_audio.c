@@ -382,3 +382,63 @@ void f_8022ED70(ppc_t* c) {
     hle_timer_stop(HLE_TIMER_AUDIO);
     f_8022ED70_orig(c);
 }
+
+/* void* SoundArchiveLoader::LoadGroup(u32 id, SoundMemoryAllocatable* heap,
+ * void** waveBuffer, u32 blockSize): said when a group of sounds doesn't
+ * fit its heap (a sound archive with larger groups than the USA one, as
+ * the Japanese one's cries make it). */
+void f_801E98B0(ppc_t* c) {
+    uint32_t id = c->r[4];
+    f_801E98B0_orig(c);
+    HLE_LOG("sound group %u: %s", id, c->r[3] ? "loaded" : "failed");
+    if (!c->r[3]) HLE_WARN("sound group %u didn't load (no room in its heap)", id);
+}
+
+/* Volumes of the kinds of sound (the Audio options): music, the Pokémon's
+ * cries, and the other sounds. Every sound plays through one of the sound
+ * archive's players, and BasicSound::UpdateParam multiplies its initial
+ * volume (+0xB0) by its player's (+0x10) each frame: for that call the
+ * initial volume is scaled by its kind's, so a change is heard at once and
+ * the game's own volumes and fades stay as they are. */
+enum { KIND_MUSIC, KIND_EFFECTS, KIND_CRIES, KINDS };
+#define PLAYER_SIZE 100 /* sizeof(nw4r::snd::SoundPlayer) */
+static uint32_t sPlayers;  /* SoundArchivePlayer's players */
+static float sKindVolume[KINDS] = {1.0f, 1.0f, 1.0f};
+
+void hle_set_sound_volumes(int music, int effects, int cries) {
+    sKindVolume[KIND_MUSIC] = music / 100.0f;
+    sKindVolume[KIND_EFFECTS] = effects / 100.0f;
+    sKindVolume[KIND_CRIES] = cries / 100.0f;
+}
+
+/* The archive's players (Delhi.brsar): 8 PLAYER_POKE (the cries), 10
+ * PLAYER_BGM and 12 PLAYER_LAYER (music, the latter in layers); the rest
+ * are effects. */
+static int sound_kind(uint32_t player) {
+    uint32_t i;
+    if (!sPlayers || player < sPlayers || (player - sPlayers) % PLAYER_SIZE) return KIND_EFFECTS;
+    i = (player - sPlayers) / PLAYER_SIZE;
+    return i == 10 || i == 12 ? KIND_MUSIC : i == 8 ? KIND_CRIES : KIND_EFFECTS;
+}
+
+/* bool SoundArchivePlayer::SetupSoundPlayer(const SoundArchive*, void*, void*) */
+void f_801EA920(ppc_t* c) {
+    uint32_t self = c->r[3];
+    f_801EA920_orig(c);
+    sPlayers = LD32(self + 0x40);
+}
+
+/* void BasicSound::UpdateParam(void) */
+void f_801DC720(ppc_t* c) {
+    uint32_t s = c->r[3];
+    float k = sKindVolume[sound_kind(LD32(s + 0x10))];
+    double was;
+    if (k == 1.0f) {
+        f_801DC720_orig(c);
+        return;
+    }
+    was = ld_f32(s + 0xB0);
+    st_f32(s + 0xB0, was * k);
+    f_801DC720_orig(c);
+    st_f32(s + 0xB0, was);
+}

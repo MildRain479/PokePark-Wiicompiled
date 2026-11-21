@@ -69,36 +69,53 @@ static const char* key_icon(int vk) {
     return NULL;
 }
 
-static const char* pad_icon(uint32_t b) {
-    switch (b) {
-    case XPAD_A: return "pad_a";
-    case XPAD_B: return "pad_b";
-    case XPAD_X: return "pad_x";
-    case XPAD_Y: return "pad_y";
-    case XPAD_LB: return "pad_lb";
-    case XPAD_RB: return "pad_rb";
-    case XPAD_LT: return "pad_lt";
-    case XPAD_RT: return "pad_rt";
-    case XPAD_START: return "pad_start";
-    case XPAD_BACK: return "pad_back";
-    case XPAD_LTHUMB: return "pad_lstick";
-    case XPAD_RTHUMB: return "pad_rstick";
-    }
+/* A controller button's icon (b is where it is, as on an Xbox
+ * controller), as the kind of controller (PAD_ICONS_*) labels the button
+ * there: a PlayStation controller's shapes, a Nintendo one's letters (B at
+ * the bottom) and shoulders. */
+static const char* pad_icon(uint32_t b, int kind) {
+    static const struct {
+        uint32_t b;
+        const char* name[3]; /* Xbox, PlayStation, Nintendo */
+    } kIcons[] = {
+        {XPAD_A, {"pad_a", "ps_cross", "pad_b"}},       {XPAD_B, {"pad_b", "ps_circle", "pad_a"}},
+        {XPAD_X, {"pad_x", "ps_square", "pad_y"}},      {XPAD_Y, {"pad_y", "ps_triangle", "pad_x"}},
+        {XPAD_LB, {"pad_lb", "ps_l1", "ns_l"}},         {XPAD_RB, {"pad_rb", "ps_r1", "ns_r"}},
+        {XPAD_LT, {"pad_lt", "ps_l2", "ns_zl"}},        {XPAD_RT, {"pad_rt", "ps_r2", "ns_zr"}},
+        {XPAD_START, {"pad_start", "ps_options", "ns_plus"}}, {XPAD_BACK, {"pad_back", "ps_create", "ns_minus"}},
+        {XPAD_LTHUMB, {"pad_lstick", "pad_lstick", "pad_lstick"}}, {XPAD_RTHUMB, {"pad_rstick", "pad_rstick", "pad_rstick"}},
+    };
+    int i;
+    /* The button the binding is on, with the Nintendo layout's swap. */
+    b = settings_face_swap(b);
+    for (i = 0; i < (int)(sizeof(kIcons) / sizeof(kIcons[0])); i++)
+        if (kIcons[i].b == b) return kIcons[i].name[kind - PAD_ICONS_XBOX];
     return NULL;
 }
 
-static const uint32_t kBit[ACT_COUNT] = {
+/* The kind of controller whose icons show. */
+static int pad_kind(void) { return g_settings.pad_icons == PAD_ICONS_AUTO ? input_pad_family() : g_settings.pad_icons; }
+
+static const uint32_t kBit[BIND_COUNT] = {
     HOST_PAD_SCREEN_UP, HOST_PAD_SCREEN_DOWN, HOST_PAD_SCREEN_LEFT, HOST_PAD_SCREEN_RIGHT, HOST_PAD_2, HOST_PAD_1,
     HOST_PAD_A, HOST_PAD_B, HOST_PAD_PLUS, HOST_PAD_MINUS, HOST_PAD_HOME, HOST_PAD_SHAKE, HOST_PAD_SHAKE2,
+    HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, /* the menus' */
+    HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, /* the minigames' */
 };
 
-/* The icon for one button (HOST_PAD_*), or NULL to keep the game's glyph. */
-static const char* icon_for(uint32_t button) {
+/* The icon for one button (HOST_PAD_*), in a layer (LAYER_*: the menus and
+ * minigames bind 2, 1, A and B apart), or NULL to keep the game's glyph. */
+static const char* icon_for(uint32_t button, int layer) {
     int a, k, pad = input_controller_last();
-    for (a = 0; a < ACT_COUNT && kBit[a] != button; a++) {}
-    if (a == ACT_COUNT) return NULL;
+    int last = LAYER_END(layer);
+    for (a = LAYER_FIRST(layer); a < last && kBit[a] != button; a++) {}
+    if (a == last && layer != LAYER_PARK) { /* not one of the layer's own: the park's */
+        for (a = 0; a < ACT_COUNT && kBit[a] != button; a++) {}
+        last = ACT_COUNT;
+    }
+    if (a == last) return NULL;
     for (k = 0; k < BIND_SLOTS; k++) {
-        const char* n = pad ? pad_icon(g_settings.pad[a][k]) : key_icon(g_settings.key[a][k]);
+        const char* n = pad ? pad_icon(g_settings.pad[a][k], pad_kind()) : key_icon(g_settings.key[a][k]);
         if (n) return n;
     }
     return NULL;
@@ -113,7 +130,7 @@ typedef struct {
     uint8_t* alpha; /* w x h, top row first */
 } Icon;
 
-static Icon sIcons[96];
+static Icon sIcons[128];
 static int sIconCount;
 
 #ifdef _WIN32
@@ -243,7 +260,7 @@ static void draw_icon(const Icon* icon, uint8_t* out, int stride, int bx, int by
  * HOST_PAD_SCREEN_UP stands for the d-pad as a whole: on the controller
  * the left stick (which moves too), on the keyboard its four keys in a
  * cross, if each has an icon. Returns 0 to keep the game's glyph. */
-static int prompt_icon(uint32_t button, uint8_t* out, int w, int h) {
+static int prompt_icon(uint32_t button, int layer, uint8_t* out, int w, int h) {
     Icon* icon;
     memset(out, 0, (size_t)w * h);
     if (button == HOST_PAD_SCREEN_UP && !input_controller_last()) {
@@ -251,23 +268,25 @@ static int prompt_icon(uint32_t button, uint8_t* out, int w, int h) {
         Icon* arrows[4];
         int i;
         for (i = 0; i < 4; i++) {
-            const char* name = icon_for(kBit[i]);
+            const char* name = icon_for(kBit[i], 0);
             if (!(arrows[i] = name ? load_icon(name) : NULL)) return 0;
         }
         for (i = 0; i < 4; i++) draw_icon(arrows[i], out, w, kCell[i][0] * w / 3, kCell[i][1] * h / 3, w / 3, h / 3);
         return 1;
     }
     {
-        const char* name = button == HOST_PAD_SCREEN_UP ? "pad_lstick" : icon_for(button);
+        const char* name = button == HOST_PAD_SCREEN_UP ? "pad_lstick" : icon_for(button, layer);
         if (!(icon = name ? load_icon(name) : NULL)) return 0;
     }
     draw_icon(icon, out, w, 0, 0, w, h);
     return 1;
 }
 
-/* Changes whenever the icons to show may have: the bindings were saved, or
- * the other device was used. */
-static uint32_t prompt_generation(void) { return settings_generation() * 2 + (uint32_t)input_controller_last(); }
+/* Changes whenever the icons to show may have: the bindings were saved,
+ * the other device was used, or another kind of controller. */
+static uint32_t prompt_generation(void) {
+    return settings_generation() * 8 + (uint32_t)pad_kind() * 2 + (uint32_t)input_controller_last();
+}
 
 static void button_name(uint32_t button, char* out, int n) {
     int a;

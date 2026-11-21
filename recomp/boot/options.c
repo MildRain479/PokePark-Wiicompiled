@@ -9,8 +9,8 @@
  *   binding's two slots; Select rebinds (press the key, mouse button or
  *   controller button, or Esc to cancel); Delete, or Y, clears.
  *
- * Its controls are the game's, as bound (Select is 2, Back is 1, as the
- * Pad's bar says), and the arrow keys, Enter and Esc; the mouse clicks
+ * Its controls are the game's menus', as bound (Select is 2, Back is 1,
+ * as the Pad's bar says), and the arrow keys, Enter and Esc; the mouse clicks
  * what it points at. The book is drawn into an image laid over the
  * picture (gl_backend.c), only again when something on it changes,
  * leaving the bar at the bottom clear: the game's, which shows the
@@ -28,6 +28,7 @@
 #include "host_settings.h"
 
 #include "canvas.h"
+#include "langpack.h"
 #include "wii_save.h"
 
 int hle_pause_main_page(void); /* hle_pause.c */
@@ -50,22 +51,23 @@ int gxb_display_hz(void);
 #ifdef __ANDROID__
 /* No keyboard: its section isn't there. Dual screen is, in its place,
  * only on a handheld with two screens. */
-enum { SEC_DISPLAY, SEC_CONTROLLER, SEC_GAMEPLAY, SEC_DUAL, SECTIONS, SEC_KEYBOARD = -1 };
-static const char* const kSection[SECTIONS] = {"Display", "Controller", "Gameplay", "Dual screen"};
-static const int kSectionColor[SECTIONS] = {0, 2, 3, 1}; /* which of the Pad's button colors */
+enum { SEC_DISPLAY, SEC_CONTROLLER, SEC_GAMEPLAY, SEC_AUDIO, SEC_DUAL, SECTIONS, SEC_KEYBOARD = -1 };
+static const char* const kSection[SECTIONS] = {"Display", "Controller", "Gameplay", "Audio", "Dual screen"};
+static const int kSectionColor[SECTIONS] = {0, 2, 3, 1, 0}; /* which of the Pad's button colors */
 static int sections(void) { return second_screen_device() ? SECTIONS : SEC_DUAL; }
 #else
-enum { SEC_DISPLAY, SEC_KEYBOARD, SEC_CONTROLLER, SEC_GAMEPLAY, SECTIONS, SEC_DUAL = -1 };
-static const char* const kSection[SECTIONS] = {"Display", "Keyboard", "Controller", "Gameplay"};
-static const int kSectionColor[SECTIONS] = {0, 1, 2, 3};
+enum { SEC_DISPLAY, SEC_KEYBOARD, SEC_CONTROLLER, SEC_GAMEPLAY, SEC_AUDIO, SECTIONS, SEC_DUAL = -1 };
+static const char* const kSection[SECTIONS] = {"Display", "Keyboard", "Controller", "Gameplay", "Audio"};
+static const int kSectionColor[SECTIONS] = {0, 1, 2, 3, 1};
 static int sections(void) { return SECTIONS; }
 #endif
 
 /* A row: a setting (settings_step), a binding (an action), resetting the
  * controls, closing the game (selected twice, as unsaved progress is
  * lost), or bringing over a save from a Wii or Dolphin (only on the save
- * file screen, where nothing is lost by it). */
-enum { ROW_SETTING, ROW_BINDING, ROW_RESET, ROW_CLOSE, ROW_IMPORT, ROW_EXPORT };
+ * file screen, where nothing is lost by it), or making a language pack
+ * from a disc of that language (langpack.h). */
+enum { ROW_SETTING, ROW_BINDING, ROW_RESET, ROW_CLOSE, ROW_IMPORT, ROW_EXPORT, ROW_LANGPACK };
 typedef struct {
     int kind, which;
     const char* label;
@@ -95,6 +97,14 @@ static const Row kGameplay[] = {
     {ROW_SETTING, SET_DAMAGE_TAKEN, "Damage taken"},
     {ROW_SETTING, SET_CHASE_SPEED, "Chase speed"},
     {ROW_SETTING, SET_AUTOSAVE, "Autosave"},
+    {ROW_SETTING, SET_LANGUAGE, "Language"},
+    {ROW_LANGPACK, 0, "Language pack"},
+};
+static const Row kAudio[] = {
+    {ROW_SETTING, SET_MUSIC_VOLUME, "Music"},
+    {ROW_SETTING, SET_EFFECTS_VOLUME, "Sound effects"},
+    {ROW_SETTING, SET_CRIES_VOLUME, "Cries"},
+    {ROW_SETTING, SET_CRIES, "Cries language"},
 };
 static const Row kDual[] = {
     {ROW_SETTING, SET_DUAL_SCREEN, "Dual screen"},
@@ -102,9 +112,13 @@ static const Row kDual[] = {
     {ROW_SETTING, SET_MINIMAP_TOP, "Map on main"},
     {ROW_SETTING, SET_FRIENDS_LIST, "Friends list"},
 };
-static const char* const kAction[ACT_COUNT] = {
+static const char* const kAction[BIND_COUNT] = {
     "Up", "Down", "Left", "Right", "2: Jump", "1: Dash", "A: Thunderbolt", "B: Camera", "+: Pad", "-: Map", "First person",
     "Shake", "Shake 2",
+    /* In the game's menus, in place of the park's 2, 1, A and B. */
+    "Menus 2: Select", "Menus 1: Back", "Menus A", "Menus B",
+    /* In the minigames, the same. */
+    "Minigames 2", "Minigames 1", "Minigames A: Shoot", "Minigames B",
 };
 
 /* Android's Controller section starts with the touch controls' row, where
@@ -115,6 +129,28 @@ static const char* const kAction[ACT_COUNT] = {
 #define TOUCH_ROW 0
 #endif
 
+/* After the bindings: the keyboard's and the controller's settings, then
+ * "Reset all controls". */
+static const Row kKeyboardSettings[] = {
+    {ROW_SETTING, SET_SENSITIVITY, "Camera speed"},
+    {ROW_SETTING, SET_INVERT, "Invert up/down"},
+    {ROW_SETTING, SET_INVERT_TURN, "Invert left/right"},
+};
+static const Row kPadSettings[] = {
+    {ROW_SETTING, SET_RUMBLE, "Rumble"},
+    {ROW_SETTING, SET_PAD_ICONS, "Button icons"},
+    {ROW_SETTING, SET_NINTENDO_LAYOUT, "Nintendo layout"},
+    {ROW_SETTING, SET_STICK_SPEED, "Camera speed"},
+    {ROW_SETTING, SET_INVERT, "Invert up/down"},
+    {ROW_SETTING, SET_INVERT_TURN, "Invert left/right"},
+    {ROW_SETTING, SET_DEAD_ZONE, "Stick dead zone"},
+    {ROW_SETTING, SET_GYRO_AIM, "Gyro aiming"},
+    {ROW_SETTING, SET_GYRO_SPEED, "Gyro speed"},
+    {ROW_SETTING, SET_GYRO_STEER, "Gyro steering"},
+};
+#define KEYBOARD_SETTINGS (int)(sizeof(kKeyboardSettings) / sizeof(kKeyboardSettings[0]))
+#define PAD_SETTINGS (int)(sizeof(kPadSettings) / sizeof(kPadSettings[0]))
+
 #define GAMEPLAY_ROWS (int)(sizeof(kGameplay) / sizeof(kGameplay[0]))
 static int import_shown(void);
 
@@ -122,8 +158,9 @@ static int row_count(int sec) {
     return sec == SEC_DISPLAY    ? (int)(sizeof(kDisplay) / sizeof(kDisplay[0]))
            : sec == SEC_GAMEPLAY ? GAMEPLAY_ROWS + 2 * import_shown()
            : sec == SEC_DUAL     ? (int)(sizeof(kDual) / sizeof(kDual[0]))
-           : sec == SEC_KEYBOARD ? ACT_COUNT + 3 /* camera speed, invert, reset */
-                                 : TOUCH_ROW + ACT_COUNT + 2; /* (touch controls,) rumble, reset */
+           : sec == SEC_AUDIO    ? (int)(sizeof(kAudio) / sizeof(kAudio[0]))
+           : sec == SEC_KEYBOARD ? BIND_COUNT + KEYBOARD_SETTINGS + 1 /* (reset) */
+                                 : TOUCH_ROW + BIND_COUNT + PAD_SETTINGS + 1; /* (touch controls, reset) */
 }
 
 static Row row_at(int sec, int i) {
@@ -141,35 +178,50 @@ static Row row_at(int sec, int i) {
     }
     if (sec == SEC_GAMEPLAY) return kGameplay[i];
     if (sec == SEC_DUAL) return kDual[i];
+    if (sec == SEC_AUDIO) return kAudio[i];
     if (TOUCH_ROW && sec == SEC_CONTROLLER && i-- == 0) {
         r.kind = ROW_SETTING;
         r.which = SET_TOUCH;
         r.label = "Touch controls";
         return r;
     }
-    if (i < ACT_COUNT) {
+    if (i < BIND_COUNT) {
         r.kind = ROW_BINDING;
         r.which = i;
         r.label = kAction[i];
-    } else if (sec == SEC_KEYBOARD && i == ACT_COUNT) {
-        r.kind = ROW_SETTING;
-        r.which = SET_SENSITIVITY;
-        r.label = "Camera speed";
-    } else if (sec == SEC_CONTROLLER && i == ACT_COUNT) {
-        r.kind = ROW_SETTING;
-        r.which = SET_RUMBLE;
-        r.label = "Rumble";
-    } else if (sec == SEC_KEYBOARD && i == ACT_COUNT + 1) {
-        r.kind = ROW_SETTING;
-        r.which = SET_INVERT;
-        r.label = "Invert camera";
+    } else if (sec == SEC_KEYBOARD && i - BIND_COUNT < KEYBOARD_SETTINGS) {
+        r = kKeyboardSettings[i - BIND_COUNT];
+    } else if (sec == SEC_CONTROLLER && i - BIND_COUNT < PAD_SETTINGS) {
+        r = kPadSettings[i - BIND_COUNT];
     }
     return r;
+}
+
+/* Whether a language's pack has its text (what = "text") or its cries. */
+static int pack_has(int lang, const char* what) {
+    char path[1200];
+    FILE* f;
+    if (lang == LANGUAGE_EN) return 1;
+    snprintf(path, sizeof(path), "%s/%s/files/%s", settings_language_dir(lang), what,
+             what[0] == 't' ? "Archive/PrepareMessageRes.dac" : "Sound/Delhi.brsar");
+    if (!(f = fopen(path, "rb"))) return 0;
+    fclose(f);
+    return 1;
+}
+
+static void language_text(int lang, int started, const char* what, char* out, size_t n) {
+    snprintf(out, n, "%s%s", settings_language_name(lang),
+             !pack_has(lang, what) ? " (no pack)" : lang != started ? " (restart)" : "");
 }
 
 static void setting_text(int which, char* out, size_t n) {
     int s;
     switch (which) {
+    case SET_LANGUAGE: language_text(g_settings.language, g_language_started, "text", out, n); break;
+    case SET_CRIES: language_text(g_settings.cries, g_cries_started, "cries", out, n); break;
+    case SET_MUSIC_VOLUME: snprintf(out, n, "%d%%", g_settings.music_volume); break;
+    case SET_EFFECTS_VOLUME: snprintf(out, n, "%d%%", g_settings.effects_volume); break;
+    case SET_CRIES_VOLUME: snprintf(out, n, "%d%%", g_settings.cries_volume); break;
     case SET_FULLSCREEN: snprintf(out, n, g_settings.fullscreen ? "On" : "Off"); break;
     case SET_SCALE:
         s = g_settings.scale ? g_settings.scale : display_scale();
@@ -184,6 +236,22 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_FOV: snprintf(out, n, "%d%%", g_settings.fov); break;
     case SET_SENSITIVITY: snprintf(out, n, "%.1f", g_settings.mouse_sensitivity); break;
     case SET_INVERT: snprintf(out, n, g_settings.invert_tilt ? "On" : "Off"); break;
+    case SET_INVERT_TURN: snprintf(out, n, g_settings.invert_turn ? "On" : "Off"); break;
+    case SET_NINTENDO_LAYOUT: snprintf(out, n, g_settings.nintendo_layout ? "On" : "Off"); break;
+    case SET_PAD_ICONS: {
+        static const char* const kKind[PAD_ICONS] = {"Auto", "Xbox", "PlayStation", "Nintendo"};
+        if (g_settings.pad_icons == PAD_ICONS_AUTO) snprintf(out, n, "Auto (%s)", kKind[input_pad_family()]);
+        else snprintf(out, n, "%s", kKind[g_settings.pad_icons]);
+        break;
+    }
+    case SET_DEAD_ZONE: snprintf(out, n, "%d%%", g_settings.stick_dead_zone); break;
+    case SET_STICK_SPEED: snprintf(out, n, "%.1f", g_settings.stick_speed); break;
+    case SET_GYRO_SPEED: snprintf(out, n, "%.1f", g_settings.gyro_speed); break;
+    case SET_GYRO_AIM:
+    case SET_GYRO_STEER:
+        snprintf(out, n, "%s%s", (which == SET_GYRO_AIM ? g_settings.gyro_aim : g_settings.gyro_steer) ? "On" : "Off",
+                 input_has_gyro() ? "" : " (no gyro)");
+        break;
     case SET_TOUCH: snprintf(out, n, g_settings.touch_controls ? "On" : "Off"); break;
     case SET_MINIMAP_TOP: snprintf(out, n, g_settings.minimap_top ? "On" : "Off"); break;
     case SET_AUTOSAVE: snprintf(out, n, g_settings.autosave ? "On" : "Off"); break;
@@ -343,6 +411,29 @@ static void left_right(int d) {
  * picker and restarts the game. */
 static int sImportWanted;
 
+/* Making a language pack: asked for at the next pad read on Android (as
+ * the import), and its progress drawn as it changes. */
+static int sLangpackWanted;
+
+static void langpack_text(char* out, size_t n) {
+    int pct;
+    const char* msg;
+    int st = langpack_state(&pct, &msg);
+    if (st == LANGPACK_RUNNING && pct > 0) snprintf(out, n, "%s: %d%%", msg, pct);
+    else if (st == LANGPACK_IDLE) snprintf(out, n, "From a disc...");
+    else snprintf(out, n, "%s", msg);
+}
+
+static void langpack_poll(void) {
+    static int last_state = -1, last_pct = -1;
+    int pct, st = langpack_state(&pct, NULL);
+    if (st != last_state || pct != last_pct) {
+        last_state = st;
+        last_pct = pct;
+        if (sOpen) changed();
+    }
+}
+
 /* Frames the page stays open for while what it was opened from is drawn
  * again: the game, waiting on the picker, didn't draw it, and its time
  * went on (hle_file_select_shown). */
@@ -401,6 +492,15 @@ static void select_(void) {
         export_save();
 #endif
         return;
+    } else if (r.kind == ROW_LANGPACK) {
+#ifdef __ANDROID__
+        sLangpackWanted = 1; /* (as the import, above) */
+#else
+        langpack_choose();
+        sGrace = 30;
+#endif
+        changed();
+        return;
     } else if (r.kind == ROW_CLOSE) {
         if (close_armed()) exit(0); /* as closing the window does */
         changed();
@@ -438,6 +538,35 @@ static void bind(int vk, uint32_t pad) {
 static const Rect kTab = {810, 46, 1046, 120};            /* the other tab, at the right page's top */
 static const Rect kButton[4] = {
     {333, 150, 748, 230}, {320, 262, 737, 342}, {328, 374, 746, 454}, {328, 487, 746, 562}};
+static const Rect kPocket[4] = {{8, 13, 295, 104}, {21, 113, 303, 218}, {21, 113, 303, 218}, {27, 223, 297, 327}};
+static const Rect kPocketAt[4] = {{262, 230, 778, 394}, {272, 342, 780, 534}, {272, 454, 780, 646}, {290, 560, 780, 760}};
+
+/* Section i's button and pocket (and which of the pocket pictures): the
+ * Pad's four places, or with more sections, spread over the same height
+ * and made shorter. */
+static int section_place(int i, Rect* button, Rect* pocket) {
+    int n = sections(), a;
+    float t = n > 4 ? i * 3.0f / (n - 1) : (float)i, f, k = n > 4 ? 4.0f / n : 1.0f;
+    Rect b, p;
+    a = (int)t > 2 ? 2 : (int)t;
+    f = t - a;
+#define LERP(r, field) (r[a].field + (r[a + 1].field - r[a].field) * f)
+    b.x0 = LERP(kButton, x0);
+    b.x1 = LERP(kButton, x1);
+    b.y0 = LERP(kButton, y0);
+    b.y1 = LERP(kButton, y1);
+    p.x0 = LERP(kPocketAt, x0);
+    p.x1 = LERP(kPocketAt, x1);
+    p.y0 = LERP(kPocketAt, y0);
+    p.y1 = LERP(kPocketAt, y1);
+#undef LERP
+    p.y0 = b.y0 + (p.y0 - b.y0) * k;
+    p.y1 = b.y0 + (p.y1 - b.y0) * k;
+    b.y1 = b.y0 + (b.y1 - b.y0) * k;
+    if (button) *button = b;
+    if (pocket) *pocket = p;
+    return n <= 4 ? i : i == 0 ? 0 : i == n - 1 ? 3 : 1;
+}
 static const Rect kPage = {845, 40, 1325, 765};           /* the right page's writing */
 #define ROWS_TOP 140.0f
 #define ROW_PITCH 72.0f
@@ -476,14 +605,14 @@ static void draw_picture(const char* name, const char* alpha, Rect src, Rect dst
 
 static const Rect kWhole = {0, 0, 0, 0};
 
-/* The icon of what's bound to a remote button (HOST_PAD_*), white with
+/* The icon of what's bound to a remote button (HOST_PAD_*) in the menus, white with
  * an edge, in dst; 0 if there's none. */
 static int draw_button_icon(uint32_t button, Rect dst, uint32_t edge) {
     static uint8_t cov[96 * 96];
     static float mask[160 * 160];
     int n = 96, bw, bh, bx0, by0, i, j, pad = (int)ceilf(4 * sScale) + 1;
     float dw = X(dst.x1) - X(dst.x0), dh = Y(dst.y1) - Y(dst.y0);
-    if (!g_host_prompt_icon || !g_host_prompt_icon(button, cov, n, n)) return 0;
+    if (!g_host_prompt_icon || !g_host_prompt_icon(button, LAYER_MENUS, cov, n, n)) return 0; /* (a menu) */
     bw = (int)dw + 2 * pad;
     bh = (int)dh + 2 * pad;
     if (bw * bh > (int)(sizeof(mask) / sizeof(mask[0]))) return 0;
@@ -560,14 +689,11 @@ static void draw_pages(void) {
 }
 
 static void draw_book(void) {
-    static const Rect kPocket[4] = {{8, 13, 295, 104}, {21, 113, 303, 218}, {21, 113, 303, 218}, {27, 223, 297, 327}};
-    static const Rect kPocketAt[4] = {
-        {262, 230, 778, 394}, {272, 342, 780, 534}, {272, 454, 780, 646}, {290, 560, 780, 760}};
     static const Rect kBlue[4] = {{8, 10, 120, 69}, {9, 90, 119, 145}, {8, 10, 120, 69}, {8, 170, 120, 229}};
     static const Rect kArrow = {3, 8, 28, 54};
     int i, n = row_count(sSection), aw, ah;
     const uint32_t* arrow = hle_pause_image("PmArrowheadMat", "PmArrowheadMatAlp", &aw, &ah);
-    char buf[64];
+    char buf[160];
 
 
     /* The sections, as the Pad's buttons: each in its pocket, the chosen
@@ -575,15 +701,16 @@ static void draw_book(void) {
     if (sSection >= sections()) sSection = 0;
     for (i = 0; i < sections(); i++) {
         Rect src = kBlue[kSectionColor[i]];
-        Rect at = kButton[i];
+        Rect at, pocket;
+        int pocket_src = section_place(i, &at, &pocket);
         if (i == sSection) {
             src.x0 += 128;
             src.x1 += 128;
         }
         draw_picture("PmMenuButton", NULL, src, at, sOnRows && i == sSection ? 0xE8E0E0 : 0xFFFFFF);
-        draw_text(kSection[i], (at.x0 + at.x1) / 2 + 8, (at.y0 + at.y1) / 2 + 2, 60, ALIGN_CENTRE, 0xFFFFFFFFu, PURPLE,
-                  3.5f, 1, at.x1 - at.x0 - 60);
-        draw_picture("PmButtonPocket", NULL, kPocket[i], kPocketAt[i], 0xFFFFFF);
+        draw_text(kSection[i], (at.x0 + at.x1) / 2 + 8, (at.y0 + at.y1) / 2 + 2, (at.y1 - at.y0) * 0.75f, ALIGN_CENTRE,
+                  0xFFFFFFFFu, PURPLE, 3.5f, 1, at.x1 - at.x0 - 60);
+        draw_picture("PmButtonPocket", NULL, kPocket[pocket_src], pocket, 0xFFFFFF);
     }
 
     /* The section's settings, a bar each as the Pad's counts are shown. */
@@ -617,6 +744,10 @@ static void draw_book(void) {
         } else if (r.kind == ROW_EXPORT) {
             if (sExportResult && sExportShown == sChanges)
                 draw_text(sExportResult, 1190, my + 2, 34, ALIGN_CENTRE, WAIT, 0, 0, 1, 230);
+        } else if (r.kind == ROW_LANGPACK) {
+            langpack_text(buf, sizeof(buf));
+            draw_text(buf, 1190, my + 2, 34, ALIGN_CENTRE, langpack_state(NULL, NULL) == LANGPACK_IDLE ? INK : WAIT, 0,
+                      0, 1, 230);
         } else if (r.kind == ROW_BINDING) {
             int k;
             for (k = 0; k < BIND_SLOTS; k++) {
@@ -632,7 +763,7 @@ static void draw_book(void) {
                     continue;
                 }
                 if (sSection == SEC_CONTROLLER) {
-                    snprintf(buf, sizeof(buf), "%s", settings_pad_name(g_settings.pad[r.which][k]));
+                    snprintf(buf, sizeof(buf), "%s", settings_pad_label(g_settings.pad[r.which][k]));
                 } else {
                     settings_key_name(g_settings.key[r.which][k], buf, sizeof(buf));
                 }
@@ -760,7 +891,9 @@ static int click(int mx, int my) {
         return 1;
     }
     for (i = 0; i < sections(); i++) {
-        if (in(kButton[i], x, y)) {
+        Rect at;
+        section_place(i, &at, NULL);
+        if (in(at, x, y)) {
             sSection = i;
             sOnRows = 0;
             sRow = sTop = sSlot = 0;
@@ -840,8 +973,8 @@ int options_window_message(unsigned msg, uintptr_t wp, intptr_t lp) {
     else if (vk == VK_LEFT || key_is(vk, ACT_LEFT)) left_right(-1);
     else if (vk == VK_RIGHT || key_is(vk, ACT_RIGHT)) left_right(1);
     else if (repeat) return 1;
-    else if (vk == VK_RETURN || key_is(vk, ACT_2)) select_();
-    else if (vk == VK_ESCAPE || vk == VK_BACK || key_is(vk, ACT_1)) back();
+    else if (vk == VK_RETURN || key_is(vk, ACT_MENU_2)) select_();
+    else if (vk == VK_ESCAPE || vk == VK_BACK || key_is(vk, ACT_MENU_1)) back();
     else if (vk == VK_DELETE) clear();
     return 1;
 }
@@ -885,6 +1018,12 @@ void options_controller(uint32_t raw, uint32_t nav) {
         sExportWanted = 0;
         export_save();
     }
+    if (sLangpackWanted) {
+        sLangpackWanted = 0;
+        langpack_choose();
+        sGrace = 30;
+    }
+    langpack_poll();
     if (!sOpen) {
         if ((navPressed & XPAD_RIGHT) && hle_pause_main_page()) open_from(FROM_PAD);
         else if (pad_is(pressed, ACT_MINUS) && file_button_shown()) file_button();
@@ -899,8 +1038,8 @@ void options_controller(uint32_t raw, uint32_t nav) {
     if (navPressed & XPAD_DOWN) up_down(1);
     if (navPressed & XPAD_LEFT) left_right(-1);
     if (navPressed & XPAD_RIGHT) left_right(1);
-    if ((pressed & XPAD_A) || pad_is(pressed, ACT_2)) select_();
-    else if ((pressed & XPAD_B) || pad_is(pressed, ACT_1)) back();
+    if ((pressed & XPAD_A) || pad_is(pressed, ACT_MENU_2)) select_();
+    else if ((pressed & XPAD_B) || pad_is(pressed, ACT_MENU_1)) back();
     else if (pressed & XPAD_Y) clear();
 }
 

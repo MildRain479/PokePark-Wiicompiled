@@ -92,6 +92,10 @@ static void add_fst_files(void) {
     }
 }
 
+/* The extracted disc's folder (root/sys, root/files), or "" when it's
+ * read from a disc image. */
+const char* hle_dvd_root(void) { return sImageRead ? "" : sRoot; }
+
 int hle_dvd_init(const char* root) {
     uint8_t* boot;
     char path[600];
@@ -138,6 +142,95 @@ int hle_dvd_init_image(const uint8_t* boot, const uint8_t* fst, uint32_t fstSize
     return 0;
 }
 
+/* Files that replace the disc's own (a language pack, hle_dvd_overlay):
+ * their FST entries point past the end of the disc, here. */
+#define OVERLAY_BASE 0x200000000ull /* 8 GB */
+static Region* sOverlays;
+static int sOverlayCount;
+static uint64_t sOverlayNext = OVERLAY_BASE;
+
+static uint64_t file_size(const char* path) {
+    FILE* f = fopen(path, "rb");
+    int64_t n;
+    if (!f) return 0;
+    _fseeki64(f, 0, SEEK_END);
+#ifdef _WIN32
+    n = _ftelli64(f);
+#else
+    n = ftello(f);
+#endif
+    fclose(f);
+    return n > 0 ? (uint64_t)n : 0;
+}
+
+/* Every file under <dir>/files at a path the disc has (spelled as the
+ * disc spells it) is read in place of the disc's. The FST in guest memory
+ * is changed, so this runs before the game starts; returns how many files
+ * were replaced. */
+int hle_dvd_overlay(const char* dir) {
+    uint32_t fst = LD32(0x80000038), count, i;
+    const char* names;
+    uint32_t dir_end[64];
+    char dir_path[64][256];
+    int depth = 0, made = 0;
+    uint64_t next = sOverlayNext;
+    if (!sFst || !fst || !dir || !*dir) return 0;
+    count = be32(sFst + 8);
+    names = (const char*)sFst + count * 12;
+    dir_path[0][0] = '\0';
+    dir_end[0] = count;
+    for (i = 1; i < count; i++) {
+        const uint8_t* e = sFst + i * 12;
+        const char* name = names + (be32(e) & 0xFFFFFF);
+        char path[1024];
+        uint64_t size;
+        while (depth > 0 && i >= dir_end[depth]) depth--;
+        if (e[0]) {
+            if (depth + 1 < 64) {
+                depth++;
+                snprintf(dir_path[depth], sizeof(dir_path[depth]), "%s/%s", dir_path[depth - 1], name);
+                dir_end[depth] = be32(e + 8);
+            }
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s/files%s/%s", dir, dir_path[depth], name);
+        size = file_size(path);
+        if (!size || size > 0xFFFFFFFFu) continue;
+        sOverlays = (Region*)realloc(sOverlays, (sOverlayCount + 1) * sizeof(Region));
+        sOverlays[sOverlayCount].offset = next;
+        sOverlays[sOverlayCount].size = size;
+        sOverlays[sOverlayCount].path = _strdup(path);
+        sOverlayCount++;
+        ST32(fst + i * 12 + 4, (uint32_t)(next >> 2));
+        ST32(fst + i * 12 + 8, (uint32_t)size);
+        next = (next + size + 0x7FFF) & ~0x7FFFull;
+        made++;
+    }
+    sOverlayNext = next;
+    fprintf(stderr, "disc: %d files from %s\n", made, dir);
+    return made;
+}
+
+static int read_overlay(uint64_t offset, uint32_t len, uint32_t dst) {
+    uint64_t end = offset + len;
+    int i;
+    memset(MA(dst), 0, len);
+    for (i = 0; i < sOverlayCount; i++) {
+        const Region* r = &sOverlays[i];
+        uint64_t hi = end < r->offset + r->size ? end : r->offset + r->size;
+        FILE* f;
+        if (offset < r->offset || offset >= r->offset + r->size) continue;
+        if (!(f = fopen(r->path, "rb"))) break;
+        _fseeki64(f, (int64_t)(offset - r->offset), SEEK_SET);
+        i = fread(MA(dst), 1, (size_t)(hi - offset), f) == hi - offset;
+        fclose(f);
+        HLE_LOG("disc read %08llX+%X: %s", (unsigned long long)offset, (unsigned)(hi - offset), r->path);
+        return i;
+    }
+    HLE_WARN("disc read %08llX+%X: no replacement file there", (unsigned long long)offset, (unsigned)len);
+    return 0;
+}
+
 /* What the apploader leaves in memory: the disc header at 0x80000000 and
  * the FST at the top of MEM1, just below the arena. */
 void hle_dvd_boot_setup(void) {
@@ -157,6 +250,7 @@ int hle_dvd_read(uint64_t offset, uint32_t len, uint32_t dst) {
     uint64_t end = offset + len;
     int i, ok = 1;
     if (g_mem_will_write) g_mem_will_write(dst, len);
+    if (offset >= OVERLAY_BASE) return read_overlay(offset, len, dst);
     if (sImageRead) {
         HLE_LOG("disc read %08llX+%X", (unsigned long long)offset, (unsigned)len);
         if (sImageRead(offset, MA(dst), len)) return 1;

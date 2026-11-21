@@ -41,6 +41,9 @@ void f_801741F0(ppc_t* c) {
 /* Whether the scene is a minigame (an attraction). */
 int hle_in_minigame(void) { return sScene == SCENE_ATTRACTION; }
 
+/* Whether the text shown is about a minigame: in one, or in its lobby. */
+int hle_minigame_text(void) { return sScene == SCENE_ATTRACTION || sScene == SCENE_LOBBY; }
+
 /* void AttractionManager::LoadAttractionResources(int index, ...): loads
  * At<index + 1>Dat and Res, the minigame about to start. */
 static int sAttraction;
@@ -280,4 +283,28 @@ void f_80127820(ppc_t* c) {
     }
     hle_autosave_area(c->r[3], c->r[4], c->r[5]);
     f_80127820_orig(c);
+}
+
+void f_80104400(ppc_t* c); /* starts sequence r4 */
+
+/* bool Sequencer::choose_next(): the next sequence, from the parameters
+ * the last scene left (a zone change, an attraction, the staff roll...).
+ * RECOMP_STAFF_ROLL=1 starts the staff roll (sequence 8) at its first
+ * choice instead, for testing it: in the game, the sign at the treehouse
+ * shows it, after the ending. */
+void f_80104EE0(ppc_t* c) {
+    static int asked = -1;
+    if (asked < 0) {
+        const char* e = getenv("RECOMP_STAFF_ROLL");
+        asked = e && *e && *e != '0';
+    }
+    if (asked == 1) {
+        asked = 0;
+        fputs("staff roll started (RECOMP_STAFF_ROLL)\n", stderr);
+        c->r[4] = 8;
+        f_80104400(c);
+        c->r[3] = 1;
+        return;
+    }
+    f_80104EE0_orig(c);
 }

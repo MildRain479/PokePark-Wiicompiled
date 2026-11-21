@@ -266,12 +266,26 @@ Diagnostics:
   display.
 - `RECOMP_WIDESCREEN=0` sets the console up for a 4:3 TV instead of
   16:9 (`1` for 16:9), over the Aspect ratio setting.
+- `RECOMP_LANGUAGES=<dir>` reads language packs (`tools/recomp/langpack.py`)
+  from there instead of the `languages` folder. A pack's `text/files`
+  and `cries/files` hold files at the disc's paths; `hle_dvd_overlay`
+  points their FST entries past the end of the disc (8 GB on), where
+  `hle_dvd_read` reads them from the pack.
 - `RECOMP_TEXTURES=<dir>` reads texture packs from there instead of the
   `textures` folder; `RECOMP_TEXTURES_LOG=1` prints each texture's
   Dolphin name as it's looked for.
 - `RECOMP_SD_DIR=<dir>` saves photos copied to the SD card there,
   without asking for a folder.
 - `RECOMP_FILM=<n>` gives that many rolls of film on loading a game.
+- `RECOMP_LANGPACK_IMAGE=<disc image>` builds a language pack from that
+  image as the game starts, without the picker (langpack.c); the log
+  says when it is done, and the Language pack row shows its progress.
+- `RECOMP_MENU_BINDINGS=0` gives the game's menus the park's buttons
+  too (hle_menu_input.c), to compare; `RECOMP_MENU_LOG=1` prints the
+  menus' buttons as they change, and when Pikachu starts and stops
+  reading the pad.
+- `RECOMP_STAFF_ROLL=1` plays the staff roll when the next sequence
+  ends (for example the ending, played again from the treehouse).
 - `RECOMP_PAD_SCRIPT="<seconds>:<buttons> ..."` presses buttons at set
   times, for unattended runs: `"10:2 10.3: 22:right 22.3:"` presses 2 at
   10 s and right at 22 s. Buttons: up down left right a b 1 2 plus minus

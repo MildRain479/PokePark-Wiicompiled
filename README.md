@@ -166,12 +166,21 @@ which writes a `data.bin` to copy to the SD card.
 
 - **Keyboard and mouse**, with a **mouse-controlled camera** that turns
   and tilts the player camera, even while running.
-- **Xbox-style controllers**, with rumble (off, light, normal or strong).
+- **Controllers**: Xbox, PlayStation, Switch and most others, with
+  rumble (off, light, normal or strong) on Windows and Android.
 - **Fully rebindable.** Each Wii Remote button has two keyboard or mouse
   slots and two controller slots.
+- **Menus have buttons of their own.** Select, Back, A and B in the
+  game's menus (the title, the save files, the PokéPark Pad) are bound
+  apart from the park's, so a controller's B goes back while X still
+  dashes. The minigames have their own set too, so the right trigger
+  shoots in Rotom's and Rayquaza's. They're the last rows of Options >
+  Keyboard and Controller.
 - **Button prompts match your device.** The game's on-screen Wii Remote
   icons are redrawn as the key or button they're bound to, switching
-  between keyboard and controller as you use them. The title screen,
+  between keyboard and controller as you use them, with a PlayStation
+  or Nintendo controller's own symbols when that's what you hold (or
+  pick them in Options). The title screen,
   the minigames' instructions and Primeape's Iron Tail tip name your
   keys or buttons too, instead of telling you to shake or point the
   remote.
@@ -180,7 +189,14 @@ which writes a `data.bin` to copy to the SD card.
   (the right stick's click, or View on Android's touch controls).
 - **Motion controls mapped.** The minigames' shaking, tilting, swinging
   and pointing are mapped to keys, the mouse and the sticks.
-- Camera speed and inverted camera settings.
+- **Gyro controls**, for a DualSense, DualShock 4, Switch controller or
+  a handheld's own sensors: aim the minigames' pointer by turning the
+  controller, and steer the flying, swimming, sliding and rolling
+  minigames by tilting it. Both are off until turned on in Options >
+  Controller.
+- A **Nintendo layout** setting, swapping A with B and X with Y.
+- Camera speed (mouse and right stick apart), inverted camera up/down
+  and left/right, and the sticks' dead zone.
 
 ### Gameplay options
 
@@ -194,6 +210,28 @@ Optional changes to the game's balance, all off (100%) by default:
 | Damage dealt | 50% to 300% |
 | Damage taken | none, 50% to 300% |
 | Chase speed | 50% to 150% of the speed of the Pokémon you chase |
+
+### Language and audio
+
+- **Japanese text and cries**, from your own Japanese disc (R8AJ01).
+  In Options > Gameplay, choose Language pack and pick the Japanese
+  disc image (.iso, .rvz, .wbfs and others). The game builds the pack
+  while you play, in a few minutes, into the `languages` folder beside
+  it (on Android, beside `R8AE01`). Then Options > Gameplay > Language
+  switches the text, and Options > Audio > Cries language the Pokémon's
+  voices. Both change at the next start. The menus' pictures with words
+  on them (the title screen's buttons, the button bar) and the staff
+  roll come from the Japanese disc too; the PokéPark Wii logo and the
+  English localization's credits stay.
+
+  On a PC, `tools/recomp/langpack.py` builds the same pack from the two
+  extracted discs:
+
+  ```
+  python tools/recomp/langpack.py R8AE01/disc/files <Japanese disc>/files languages/Japanese
+  ```
+- **Volumes.** Options > Audio sets the music, the sound effects and
+  the cries apart, from 0% to 100%.
 
 ### Quality of life
 
@@ -234,6 +272,10 @@ Optional changes to the game's balance, all off (100%) by default:
 | Shake | Iron Tail (in battles) | Q, Left Shift or E | LB or RB |
 | Shake (minigames) | Running, swinging | Q and E by turns | LB and RB by turns |
 
+In the menus, Select (2) and Back (1) are A and B on a controller. In
+the minigames, A is the right trigger or B (it shoots) and B is Y or the
+left trigger. On the keyboard both are the same keys as in the park.
+
 In first person, the mouse or right stick looks around and - takes a
 Photo. The same button leaves it, as does any other button but + and -.
 
@@ -251,8 +293,8 @@ releases it, and a click captures it again.
 | Gyarados' Aqua Dash, Empoleon's Snow Slide | Steer: A / D | Left stick |
 | Pelipper's Circle Circuit, Salamence's Air Race | Steer: A / D. Climb and dive: W / S | Left stick |
 | Rhyperior's Bumper Burn | Roll: WASD | Left stick |
-| Rayquaza's Balloon Panic | As flying, then aim with the mouse | Left stick, then right stick |
-| Rotom's Spooky Shoot-'em-Up | Aim: mouse | Right stick |
+| Rayquaza's Balloon Panic | As flying, then aim with the mouse and shoot with right click | Left stick, then right stick and RT |
+| Rotom's Spooky Shoot-'em-Up | Aim: mouse. Shoot: right click | Right stick. RT |
 | Bastiodon's Panel Crush | Buttons, as on the Wii | Buttons |
 
 </details>
@@ -266,7 +308,6 @@ releases it, and a click captures it again.
   that is untested.
 - **Input:** no Wii Remote pointer or Nunchuk. The game is played
   sideways, so neither is needed for the main game.
-- **Android:** no rumble yet.
 - It has been tested on one PC, one phone and the AYN Thor, so problems
   on other hardware are likely: please report them.
 

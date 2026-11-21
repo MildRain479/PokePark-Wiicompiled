@@ -34,6 +34,7 @@ void hle_set_prices(int percent);
 void hle_set_damage(int dealt, int taken);
 void hle_set_chase_speed(int percent);
 void hle_set_autosave(int on); /* hle_autosave.c */
+void hle_set_sound_volumes(int music, int effects, int cries); /* hle_audio.c */
 
 /* The gameplay settings' choices, in order. */
 static const int kTextSpeeds[] = {1, 2, 3, 0};
@@ -59,6 +60,15 @@ static void apply_gameplay(void) {
     hle_set_autosave(g_settings.autosave);
 }
 
+static void apply_audio(void) {
+    hle_set_sound_volumes(g_settings.music_volume, g_settings.effects_volume, g_settings.cries_volume);
+}
+
+static int volume_from(const char* p) {
+    int v = (atoi(p) + 5) / 10 * 10;
+    return v < 0 ? 0 : v > 100 ? 100 : v;
+}
+
 #define FOV_MIN 80
 #define FOV_MAX 150
 
@@ -68,25 +78,76 @@ static void apply_frame_rate(void) {
 }
 
 HostSettings g_settings;
+int g_language_started, g_cries_started;
 
-static const char* const kActionIni[ACT_COUNT] = {
+/* ------------------------------------------------------------------------ */
+/* Languages */
+
+static const char* const kLanguageNames[LANGUAGES] = {"English", "Japanese"};
+static const char* const kLanguageIni[LANGUAGES] = {"english", "japanese"};
+
+const char* settings_language_name(int lang) { return lang >= 0 && lang < LANGUAGES ? kLanguageNames[lang] : ""; }
+
+/* The pack's folder: languages/<name> beside the program (on Android in
+ * the app's shared folder, beside R8AE01); RECOMP_LANGUAGES=<dir> in place
+ * of languages. */
+const char* settings_language_dir(int lang) {
+    static char dir[1024];
+    const char* e = getenv("RECOMP_LANGUAGES");
+    if (e && *e) {
+        snprintf(dir, sizeof(dir), "%s/%s", e, settings_language_name(lang));
+    } else {
+#ifdef _WIN32
+        char* slash;
+        GetModuleFileNameA(NULL, dir, sizeof(dir) - 64);
+        slash = strrchr(dir, '\\');
+        snprintf(slash ? slash + 1 : dir, 64, "languages/%s", settings_language_name(lang));
+#else
+        const char* shared = getenv("RECOMP_SHARED");
+        snprintf(dir, sizeof(dir), "%s%slanguages/%s", shared ? shared : "", shared ? "/" : "",
+                 settings_language_name(lang));
+#endif
+    }
+    return dir;
+}
+
+static int language_from(const char* p) {
+    int i;
+    char word[16] = "";
+    sscanf(p, " %15s", word);
+    for (i = 0; i < LANGUAGES; i++) {
+        if (!strcmp(word, kLanguageIni[i])) return i;
+    }
+    return LANGUAGE_EN;
+}
+
+static const char* const kActionIni[BIND_COUNT] = {
     "up", "down", "left", "right", "two", "one", "a", "b", "plus", "minus", "home", "shake", "shake2",
+    "menu_two", "menu_one", "menu_a", "menu_b",
+    "minigame_two", "minigame_one", "minigame_a", "minigame_b",
 };
 
 void settings_default_controls(void) {
 #ifdef _WIN32
-    static const int kKeys[ACT_COUNT][BIND_SLOTS] = {
+    /* The menus' and minigames' keys are the park's. */
+    static const int kKeys[BIND_COUNT][BIND_SLOTS] = {
         {'W', VK_UP}, {'S', VK_DOWN}, {'A', VK_LEFT}, {'D', VK_RIGHT},
         {VK_SPACE, 'X'}, {VK_LBUTTON, 'Z'}, {VK_RBUTTON, VK_RETURN}, {'V', VK_LCONTROL},
         {'P', 0}, {'M', 0}, {VK_HOME, 'H'}, {'Q', VK_LSHIFT}, {'E', 0},
+        {VK_SPACE, 'X'}, {VK_LBUTTON, 'Z'}, {VK_RBUTTON, VK_RETURN}, {'V', VK_LCONTROL},
+        {VK_SPACE, 'X'}, {VK_LBUTTON, 'Z'}, {VK_RBUTTON, VK_RETURN}, {'V', VK_LCONTROL},
     };
 #else
-    static const int kKeys[ACT_COUNT][BIND_SLOTS]; /* no keyboard */
+    static const int kKeys[BIND_COUNT][BIND_SLOTS]; /* no keyboard */
 #endif
-    static const uint32_t kPad[ACT_COUNT][BIND_SLOTS] = {
+    /* In the menus B goes back (1), not X, the park's dash; in the
+     * minigames RT shoots (A), and B too. */
+    static const uint32_t kPad[BIND_COUNT][BIND_SLOTS] = {
         {XPAD_UP, 0}, {XPAD_DOWN, 0}, {XPAD_LEFT, 0}, {XPAD_RIGHT, 0},
         {XPAD_A, 0}, {XPAD_X, 0}, {XPAD_B, 0}, {XPAD_Y, XPAD_RT},
         {XPAD_START, 0}, {XPAD_BACK, 0}, {XPAD_RTHUMB, 0}, {XPAD_LB, 0}, {XPAD_RB, 0},
+        {XPAD_A, 0}, {XPAD_B, 0}, {XPAD_X, 0}, {XPAD_Y, XPAD_RT},
+        {XPAD_A, 0}, {XPAD_X, 0}, {XPAD_RT, XPAD_B}, {XPAD_Y, XPAD_LT},
     };
     memcpy(g_settings.key, kKeys, sizeof(kKeys));
     memcpy(g_settings.pad, kPad, sizeof(kPad));
@@ -146,12 +207,33 @@ const char* settings_pad_name(uint32_t b) {
     return "-";
 }
 
+/* A controller button's name as the controller in hand labels it (the
+ * kind the icons show), the Nintendo layout's swap taken. */
+const char* settings_pad_label(uint32_t b) {
+    static const struct {
+        uint32_t bit;
+        const char* name[2]; /* PlayStation, Nintendo */
+    } kOther[] = {
+        {XPAD_A, {"Cross", "B"}}, {XPAD_B, {"Circle", "A"}}, {XPAD_X, {"Square", "Y"}}, {XPAD_Y, {"Triangle", "X"}},
+        {XPAD_LB, {"L1", "L"}},   {XPAD_RB, {"R1", "R"}},    {XPAD_LT, {"L2", "ZL"}},  {XPAD_RT, {"R2", "ZR"}},
+        {XPAD_START, {"Options", "+"}}, {XPAD_BACK, {"Create", "-"}},
+    };
+    int kind = g_settings.pad_icons == PAD_ICONS_AUTO ? input_pad_family() : g_settings.pad_icons;
+    size_t i;
+    b = settings_face_swap(b);
+    if (kind != PAD_ICONS_XBOX) {
+        for (i = 0; i < sizeof(kOther) / sizeof(kOther[0]); i++)
+            if (kOther[i].bit == b) return kOther[i].name[kind - PAD_ICONS_PLAYSTATION];
+    }
+    return settings_pad_name(b);
+}
+
 void settings_binding_name(int act, int controller, char* out, size_t n) {
     int k;
     if (n) *out = 0;
     for (k = 0; k < BIND_SLOTS; k++) {
         if (controller && g_settings.pad[act][k]) {
-            snprintf(out, n, "%s", settings_pad_name(g_settings.pad[act][k]));
+            snprintf(out, n, "%s", settings_pad_label(g_settings.pad[act][k]));
             return;
         }
         if (!controller && g_settings.key[act][k]) {
@@ -233,14 +315,24 @@ void settings_save(void) {
     fprintf(f, "chase_speed = %d ; the speed of the Pokemon Pikachu chases, percent of the game's: 50, 75, 100, 125 or 150\n",
             g_settings.chase_speed);
     fprintf(f, "autosave = %d ; 1: save the game on making a friend or entering an area\n\n", g_settings.autosave);
+    fprintf(f, "[language]\n");
+    fprintf(f, "text = %s ; english, or japanese: a language pack in languages/Japanese (tools/recomp/langpack.py), from the next start\n\n",
+            kLanguageIni[g_settings.language]);
+    fprintf(f, "[audio] ; volumes in percent: 0-100, in tens\n");
+    fprintf(f, "music = %d\n", g_settings.music_volume);
+    fprintf(f, "effects = %d ; the sounds that aren't music or cries\n", g_settings.effects_volume);
+    fprintf(f, "cries_volume = %d ; the Pokemon's voices\n", g_settings.cries_volume);
+    fprintf(f, "cries = %s ; the Pokemon's voices: english, or japanese (from the language pack), from the next start\n\n",
+            kLanguageIni[g_settings.cries]);
     fprintf(f, "[updates]\n");
     fprintf(f, "check = %d ; 1: at start, ask GitHub whether a newer version is out\n\n", g_settings.check_updates);
 #ifndef __ANDROID__ /* no mouse or keyboard */
     fprintf(f, "[mouse]\n");
     fprintf(f, "sensitivity = %.2f ; camera turn, times the default\n", g_settings.mouse_sensitivity);
-    fprintf(f, "invert_tilt = %d\n\n", g_settings.invert_tilt);
+    fprintf(f, "invert_tilt = %d\n", g_settings.invert_tilt);
+    fprintf(f, "invert_turn = %d\n\n", g_settings.invert_turn);
     fprintf(f, "[keyboard] ; Windows virtual-key codes, two per button (0: none)\n");
-    for (i = 0; i < ACT_COUNT; i++) {
+    for (i = 0; i < BIND_COUNT; i++) {
         char a[32], b[32];
         settings_key_name(g_settings.key[i][0], a, sizeof(a));
         settings_key_name(g_settings.key[i][1], b, sizeof(b));
@@ -250,20 +342,46 @@ void settings_save(void) {
 #endif
     fprintf(f, "[controller] ; XInput buttons, two per button (0x10000: LT, 0x20000: RT)\n");
     fprintf(f, "rumble = %d ; 0 off, 1 light, 2 normal, 3 strong\n", g_settings.rumble);
+    fprintf(f, "dead_zone = %d ; the sticks', percent of the way over\n", g_settings.stick_dead_zone);
+    fprintf(f, "camera_speed = %.2f ; the right stick's camera turn, times the default\n", g_settings.stick_speed);
+#ifdef __ANDROID__ /* (on Windows, under [mouse], for both) */
+    fprintf(f, "invert_tilt = %d\n", g_settings.invert_tilt);
+    fprintf(f, "invert_turn = %d\n", g_settings.invert_turn);
+#endif
+    fprintf(f, "icons = %d ; the button prompts: 0 as the controller is, 1 Xbox, 2 PlayStation, 3 Nintendo\n",
+            g_settings.pad_icons);
+    fprintf(f, "nintendo_layout = %d ; 1: A and B, X and Y swapped (the bindings below are by where the button is)\n",
+            g_settings.nintendo_layout);
+    fprintf(f, "gyro_aim = %d ; 1: turning the controller moves the minigames' pointer\n", g_settings.gyro_aim);
+    fprintf(f, "gyro_speed = %.2f\n", g_settings.gyro_speed);
+    fprintf(f, "gyro_steer = %d ; 1: tilting the controller steers in the flying, swimming and sliding minigames\n",
+            g_settings.gyro_steer);
 #ifdef __ANDROID__
     fprintf(f, "touch_controls = %d ; 1 shown while the touch screen was used last, 0 never\n",
             g_settings.touch_controls);
 #endif
-    for (i = 0; i < ACT_COUNT; i++) {
+    for (i = 0; i < BIND_COUNT; i++) {
         fprintf(f, "%s = 0x%04X 0x%04X ; %s, %s\n", kActionIni[i], g_settings.pad[i][0], g_settings.pad[i][1],
                 settings_pad_name(g_settings.pad[i][0]), settings_pad_name(g_settings.pad[i][1]));
     }
     fclose(f);
 }
 
+/* A speed, times the default: 0.1 to 3, in tenths. */
+static float tenths_from(const char* p) {
+    float s = (float)atof(p);
+    return s < 0.1f ? 0.1f : s > 3.0f ? 3.0f : s;
+}
+
+static void tenths_step(float* v, int d) {
+    int t = (int)(*v * 10 + 0.5f) + d;
+    *v = (t < 1 ? 1 : t > 30 ? 30 : t) / 10.0f;
+}
+
 void settings_load(void) {
     char line[256], section[32] = "";
     int sawShake2 = 0, i; /* the second shake key's lines: 1 keyboard, 2 controller */
+    int sawLayer = 0;     /* the menus' and minigames' keyboard lines (bits 1 << layer) */
     FILE* f;
     memset(&g_settings, 0, sizeof(g_settings));
     g_settings.msaa = 1;
@@ -284,7 +402,11 @@ void settings_load(void) {
     g_settings.frame_rate = 30;
     g_settings.fov = 100;
     g_settings.mouse_sensitivity = 1.0f;
+    g_settings.stick_dead_zone = 24; /* about XInput's own suggestion */
+    g_settings.stick_speed = 1.0f;
+    g_settings.gyro_speed = 1.0f;
     g_settings.check_updates = 1;
+    g_settings.music_volume = g_settings.effects_volume = g_settings.cries_volume = 100;
     settings_default_controls();
     f = fopen(settings_path(), "r");
     if (!f) {
@@ -347,16 +469,43 @@ void settings_load(void) {
                 g_settings.mouse_sensitivity = s < 0.1f ? 0.1f : s > 3.0f ? 3.0f : s;
             }
             if (!strcmp(name, "invert_tilt")) g_settings.invert_tilt = atoi(p) != 0;
+            if (!strcmp(name, "invert_turn")) g_settings.invert_turn = atoi(p) != 0;
+        } else if (!strcmp(section, "language") && !strcmp(name, "text")) {
+            g_settings.language = language_from(p);
+        } else if (!strcmp(section, "audio")) {
+            if (!strcmp(name, "cries")) g_settings.cries = language_from(p);
+            if (!strcmp(name, "music")) g_settings.music_volume = volume_from(p);
+            if (!strcmp(name, "effects")) g_settings.effects_volume = volume_from(p);
+            if (!strcmp(name, "cries_volume")) g_settings.cries_volume = volume_from(p);
         } else if (!strcmp(section, "updates") && !strcmp(name, "check")) {
             g_settings.check_updates = atoi(p) != 0;
         } else if (!strcmp(section, "controller") && !strcmp(name, "rumble")) {
             g_settings.rumble = atoi(p) < 0 ? 0 : atoi(p) > 3 ? 3 : atoi(p);
         } else if (!strcmp(section, "controller") && !strcmp(name, "touch_controls")) {
             g_settings.touch_controls = atoi(p) != 0;
+        } else if (!strcmp(section, "controller") && !strcmp(name, "dead_zone")) {
+            g_settings.stick_dead_zone = atoi(p) < 0 ? 0 : atoi(p) > 50 ? 50 : atoi(p);
+        } else if (!strcmp(section, "controller") && !strcmp(name, "camera_speed")) {
+            g_settings.stick_speed = tenths_from(p);
+        } else if (!strcmp(section, "controller") && !strcmp(name, "gyro_speed")) {
+            g_settings.gyro_speed = tenths_from(p);
+        } else if (!strcmp(section, "controller") && !strcmp(name, "icons")) {
+            g_settings.pad_icons = atoi(p) < 0 || atoi(p) >= PAD_ICONS ? 0 : atoi(p);
+        } else if (!strcmp(section, "controller") && !strcmp(name, "nintendo_layout")) {
+            g_settings.nintendo_layout = atoi(p) != 0;
+        } else if (!strcmp(section, "controller") && !strcmp(name, "gyro_aim")) {
+            g_settings.gyro_aim = atoi(p) != 0;
+        } else if (!strcmp(section, "controller") && !strcmp(name, "gyro_steer")) {
+            g_settings.gyro_steer = atoi(p) != 0;
+        } else if (!strcmp(section, "controller") && !strcmp(name, "invert_tilt")) {
+            g_settings.invert_tilt = atoi(p) != 0;
+        } else if (!strcmp(section, "controller") && !strcmp(name, "invert_turn")) {
+            g_settings.invert_turn = atoi(p) != 0;
         } else if (!strcmp(section, "keyboard") || !strcmp(section, "controller")) {
-            for (i = 0; i < ACT_COUNT; i++) {
+            for (i = 0; i < BIND_COUNT; i++) {
                 if (strcmp(name, kActionIni[i])) continue;
                 if (i == ACT_SHAKE2) sawShake2 |= section[0] == 'k' ? 1 : 2;
+                if (i >= ACT_COUNT && section[0] == 'k') sawLayer |= 1 << ACT_LAYER(i);
                 a = strtoul(p, &end, 0);
                 b = strtoul(end, NULL, 0);
                 if (section[0] == 'k') {
@@ -388,10 +537,19 @@ void settings_load(void) {
             }
         }
     }
+    /* Files from before the menus and minigames had keys of their own:
+     * theirs are the park's, as they were. */
+    for (i = LAYER_MENUS; i < LAYERS; i++) {
+        int k;
+        if (sawLayer & (1 << i)) continue;
+        for (k = 0; k < LAYER_ACTS; k++)
+            memcpy(g_settings.key[LAYER_FIRST(i) + k], g_settings.key[ACT_2 + k], sizeof(g_settings.key[0]));
+    }
     apply_frame_rate();
     hle_set_fov(g_settings.fov);
     hle_set_widescreen(g_settings.aspect != ASPECT_4_3);
     apply_gameplay();
+    apply_audio();
 }
 
 void settings_step(int which, int d) {
@@ -419,6 +577,17 @@ void settings_step(int which, int d) {
         break;
     }
     case SET_INVERT: g_settings.invert_tilt = !g_settings.invert_tilt; break;
+    case SET_INVERT_TURN: g_settings.invert_turn = !g_settings.invert_turn; break;
+    case SET_DEAD_ZONE:
+        g_settings.stick_dead_zone += 2 * d;
+        g_settings.stick_dead_zone = g_settings.stick_dead_zone < 0 ? 0 : g_settings.stick_dead_zone > 50 ? 50 : g_settings.stick_dead_zone;
+        break;
+    case SET_STICK_SPEED: tenths_step(&g_settings.stick_speed, d); break;
+    case SET_GYRO_SPEED: tenths_step(&g_settings.gyro_speed, d); break;
+    case SET_GYRO_AIM: g_settings.gyro_aim = !g_settings.gyro_aim; break;
+    case SET_PAD_ICONS: g_settings.pad_icons = (g_settings.pad_icons + d + PAD_ICONS) % PAD_ICONS; break;
+    case SET_NINTENDO_LAYOUT: g_settings.nintendo_layout = !g_settings.nintendo_layout; break;
+    case SET_GYRO_STEER: g_settings.gyro_steer = !g_settings.gyro_steer; break;
     case SET_UPDATES:
         g_settings.check_updates = !g_settings.check_updates;
         update_check();
@@ -436,6 +605,18 @@ void settings_step(int which, int d) {
         g_settings.autosave = !g_settings.autosave;
         apply_gameplay();
         break;
+    case SET_LANGUAGE: g_settings.language = (g_settings.language + d + LANGUAGES) % LANGUAGES; break;
+    case SET_CRIES: g_settings.cries = (g_settings.cries + d + LANGUAGES) % LANGUAGES; break;
+    case SET_MUSIC_VOLUME:
+    case SET_EFFECTS_VOLUME:
+    case SET_CRIES_VOLUME: {
+        int* v = which == SET_MUSIC_VOLUME     ? &g_settings.music_volume
+                 : which == SET_EFFECTS_VOLUME ? &g_settings.effects_volume
+                                               : &g_settings.cries_volume;
+        *v = *v + 10 * d < 0 ? 0 : *v + 10 * d > 100 ? 100 : *v + 10 * d;
+        apply_audio();
+        break;
+    }
     case SET_TOUCH: g_settings.touch_controls = !g_settings.touch_controls; break;
     case SET_MINIMAP_TOP: g_settings.minimap_top = !g_settings.minimap_top; break;
     case SET_DUAL_SCREEN: g_settings.dual_screen = !g_settings.dual_screen; break;
@@ -481,8 +662,8 @@ void settings_step(int which, int d) {
 }
 
 void settings_bind(int act, int slot, int vk, uint32_t pad) {
-    int i, k;
-    for (i = 0; i < ACT_COUNT; i++) {
+    int i, k, layer = ACT_LAYER(act);
+    for (i = LAYER_FIRST(layer); i < LAYER_END(layer); i++) {
         for (k = 0; k < BIND_SLOTS; k++) {
             if (vk && g_settings.key[i][k] == vk) g_settings.key[i][k] = 0;
             if (pad && g_settings.pad[i][k] == pad) g_settings.pad[i][k] = 0;

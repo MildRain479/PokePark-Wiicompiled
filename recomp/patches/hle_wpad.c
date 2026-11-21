@@ -19,6 +19,8 @@
 #include "host_input.h"
 
 int (*g_host_pad_read)(int chan, uint32_t* held);
+int (*g_host_menu_read)(int chan, uint32_t* held);
+int (*g_host_game_read)(int chan, uint32_t* held);
 void (*g_host_pad_rumble)(int chan, int on);
 
 #define WPAD_MAX_CHANS 4
@@ -118,6 +120,8 @@ static uint32_t script_held(void) {
 /* What was held at the last read, HOME among it: it never reaches the game
  * as a button, but changes the camera (hle_camera.c). */
 static uint32_t sHeld;
+/* The same, as the menus have it bound (g_host_menu_read). */
+static uint32_t sMenuHeld;
 
 uint32_t hle_wpad_held(void) { return sHeld; }
 
@@ -138,6 +142,8 @@ static uint16_t wpad_buttons(uint32_t held) {
     }
     return b;
 }
+
+uint32_t hle_wpad_menu_buttons(void) { return wpad_buttons(sMenuHeld); }
 
 /* Whether the remote is being shaken: while either shake key is held, and
  * for a few swings after one is pressed, so a tap is a whole shake. */
@@ -234,11 +240,15 @@ void f_802488A0(ppc_t* c) {
     int16_t acc[3], dots[4][2];
     hle_prompts_update();
     if (on && g_host_pad_read && !g_host_pad_read(chan, &held)) held = 0;
+    /* In a minigame, the remote's buttons as the minigames have them bound. */
+    if (on && hle_in_minigame() && g_host_game_read && !g_host_game_read(chan, &held)) held = 0;
     if (on && chan == 0) {
-        uint32_t scripted = script_held();
-        if (!g_host_script_input || !g_host_script_input(scripted)) held |= scripted;
-        if (hle_password_press()) held |= HOST_PAD_2;
+        uint32_t scripted = script_held(), menu = held;
+        if (g_host_menu_read && !g_host_menu_read(chan, &menu)) menu = 0;
+        if (!g_host_script_input || !g_host_script_input(scripted)) held |= scripted, menu |= scripted;
+        if (hle_password_press()) held |= HOST_PAD_2, menu |= HOST_PAD_2;
         sHeld = held;
+        sMenuHeld = menu;
     }
     if (on && chan == 0 && (motion = hle_motion(held, sReports, acc, dots)) != 0) {
         /* In minigames, the remote's motion as each asks (hle_motion.c). */

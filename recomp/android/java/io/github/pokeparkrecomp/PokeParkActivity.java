@@ -53,6 +53,7 @@ public class PokeParkActivity extends NativeActivity {
     private static final int PICK_FOLDER = 2;
     private static final int PICK_SAVE = 3;
     private static final int PICK_EXPORT = 4;
+    private static final int PICK_LANGUAGE = 5;
     private static final String DISC = "disc";
     private static final String PHOTOS = "photos";
     private volatile int pickedFd = -1;
@@ -71,6 +72,9 @@ public class PokeParkActivity extends NativeActivity {
     private boolean askedExport;
     private volatile boolean exportPending;
     private String asking;
+    /** The disc of another language for its pack (langpack_android.c):
+     * -2 while asking, then a file descriptor open for reading, or -1. */
+    private volatile int languageFd = -1;
 
     private SharedPreferences prefs() {
         return getSharedPreferences("pokepark", MODE_PRIVATE);
@@ -491,6 +495,31 @@ public class PokeParkActivity extends NativeActivity {
         });
     }
 
+    /** Asks for a disc image of another language, for its pack (from
+     * native code; takeLanguageFd answers). */
+    public void chooseLanguageDisc() {
+        languageFd = -2;
+        runOnUiThread(() -> {
+            Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            pick.addCategory(Intent.CATEGORY_OPENABLE);
+            pick.setType("*/*");
+            try {
+                startActivityForResult(pick, PICK_LANGUAGE);
+            } catch (Exception e) {
+                Log.w("PokePark", "no file picker", e);
+                languageFd = -1;
+            }
+        });
+    }
+
+    /** -2 while asking, then the disc image, open for reading, or -1
+     * (polled from native code). */
+    public int takeLanguageFd() {
+        int fd = languageFd;
+        if (fd != -2) languageFd = -1;
+        return fd;
+    }
+
     /** -2 while asking, then the file for the zip, open for writing, or -1
      * (polled from native code). */
     public int takeExportFd() {
@@ -561,6 +590,15 @@ public class PokeParkActivity extends NativeActivity {
             }
             pickedSave = saveFiles.size();
             if (!askedSave && !saveFiles.isEmpty()) savePending = true;
+            return;
+        }
+        if (request == PICK_LANGUAGE) {
+            Uri uri = result == RESULT_OK && data != null ? data.getData() : null;
+            if (uri == null) {
+                languageFd = -1;
+                return;
+            }
+            new Thread(() -> languageFd = open(uri), "open language disc").start();
             return;
         }
         if (request == PICK_EXPORT) {

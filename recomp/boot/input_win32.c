@@ -30,6 +30,7 @@
 
 #include "host_input.h"
 #include "host_settings.h"
+#include "motion.h"
 
 typedef struct {
     WORD wButtons;
@@ -73,9 +74,13 @@ static DWORD(WINAPI* pXInputSetState)(DWORD, XPadVibration*);
     X(bool, SDL_GamepadConnected, (SDL_Gamepad*))                     \
     X(SDL_JoystickID, SDL_GetGamepadID, (SDL_Gamepad*))               \
     X(const char*, SDL_GetGamepadName, (SDL_Gamepad*))                \
+    X(SDL_GamepadType, SDL_GetGamepadType, (SDL_Gamepad*))            \
     X(bool, SDL_GetGamepadButton, (SDL_Gamepad*, SDL_GamepadButton))  \
     X(Sint16, SDL_GetGamepadAxis, (SDL_Gamepad*, SDL_GamepadAxis))    \
-    X(bool, SDL_RumbleGamepad, (SDL_Gamepad*, Uint16, Uint16, Uint32))
+    X(bool, SDL_RumbleGamepad, (SDL_Gamepad*, Uint16, Uint16, Uint32))     \
+    X(bool, SDL_GamepadHasSensor, (SDL_Gamepad*, SDL_SensorType))            \
+    X(bool, SDL_SetGamepadSensorEnabled, (SDL_Gamepad*, SDL_SensorType, bool)) \
+    X(bool, SDL_GetGamepadSensorData, (SDL_Gamepad*, SDL_SensorType, float*, int))
 #define SDL_PTR(ret, name, args) static ret(SDLCALL* p##name) args;
 SDL_FNS(SDL_PTR)
 
@@ -88,6 +93,21 @@ static CRITICAL_SECTION sPadLock;
 static SDL_Gamepad* sPads[MAX_PADS];
 static ULONGLONG sNextScan, sMotorSent;
 static WORD sMotor; /* the speed the motors should run at */
+static int sSensorsOn[MAX_PADS]; /* the controller's gyroscope and accelerometer on */
+static int sFamily = PAD_ICONS_XBOX; /* the kind of controller pressed last */
+
+static int sdl_family(SDL_Gamepad* g) {
+    switch (pSDL_GetGamepadType(g)) {
+    case SDL_GAMEPAD_TYPE_PS3:
+    case SDL_GAMEPAD_TYPE_PS4:
+    case SDL_GAMEPAD_TYPE_PS5: return PAD_ICONS_PLAYSTATION;
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: return PAD_ICONS_NINTENDO;
+    default: return PAD_ICONS_XBOX;
+    }
+}
 
 static const struct {
     SDL_GamepadButton b;
@@ -140,6 +160,7 @@ static void sdl_scan(void) {
         if (sPads[i] && !pSDL_GamepadConnected(sPads[i])) {
             pSDL_CloseGamepad(sPads[i]);
             sPads[i] = NULL;
+            sSensorsOn[i] = 0;
         }
     }
     ids = pSDL_GetGamepads(&n);
@@ -171,15 +192,55 @@ static void sdl_stick(SDL_Gamepad* g, SDL_GamepadAxis ax, SDL_GamepadAxis ay, SH
     }
 }
 
+static double seconds_now(void);
+
+/* The first controller with a gyroscope and an accelerometer: its sensors
+ * on while the minigames want them, and read (sPadLock held). */
+static void sdl_motion(void) {
+    static double last;
+    double now = seconds_now();
+    float dt = last ? (float)(now - last) : 0, v[3];
+    int i, want = motion_wanted(now), used = 0;
+    last = now;
+    for (i = 0; i < MAX_PADS; i++) {
+        SDL_Gamepad* g = sPads[i];
+        int on;
+        if (!g) continue;
+        on = want && !used && pSDL_GamepadHasSensor(g, SDL_SENSOR_GYRO) && pSDL_GamepadHasSensor(g, SDL_SENSOR_ACCEL);
+        if (on != sSensorsOn[i]) {
+            pSDL_SetGamepadSensorEnabled(g, SDL_SENSOR_GYRO, on);
+            pSDL_SetGamepadSensorEnabled(g, SDL_SENSOR_ACCEL, on);
+            sSensorsOn[i] = on;
+            if (!on) motion_off();
+        }
+        if (!on) continue;
+        used = 1;
+        if (pSDL_GetGamepadSensorData(g, SDL_SENSOR_ACCEL, v, 3)) motion_accel(v, dt, now);
+        if (pSDL_GetGamepadSensorData(g, SDL_SENSOR_GYRO, v, 3)) motion_gyro(v, dt, now);
+    }
+}
+
+static int sdl_has_gyro(void) {
+    int i, has = 0;
+    if (!sSdl) return 0;
+    EnterCriticalSection(&sPadLock);
+    for (i = 0; i < MAX_PADS; i++)
+        if (sPads[i] && pSDL_GamepadHasSensor(sPads[i], SDL_SENSOR_GYRO)) has = 1;
+    LeaveCriticalSection(&sPadLock);
+    return has;
+}
+
 static int sdl_state(XPadState* s) {
     ULONGLONG now = GetTickCount64();
     int i, k, any = 0, resend;
+    WORD pressedBefore = 0; /* (a press on a controller says it was used) */
     EnterCriticalSection(&sPadLock);
     pSDL_UpdateGamepads();
     if (now >= sNextScan) {
         sdl_scan();
         sNextScan = now + SCAN_MS;
     }
+    sdl_motion();
     resend = sMotor && now - sMotorSent >= RESEND_MS;
     if (resend) sMotorSent = now;
     for (i = 0; i < MAX_PADS; i++) {
@@ -197,6 +258,8 @@ static int sdl_state(XPadState* s) {
         sdl_stick(g, SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, &s->Gamepad.sThumbLX, &s->Gamepad.sThumbLY);
         sdl_stick(g, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY, &s->Gamepad.sThumbRX, &s->Gamepad.sThumbRY);
         if (resend) pSDL_RumbleGamepad(g, sMotor, sMotor, RUMBLE_MS);
+        if (s->Gamepad.wButtons != pressedBefore) sFamily = sdl_family(g);
+        pressedBefore = s->Gamepad.wButtons;
     }
     LeaveCriticalSection(&sPadLock);
     return any;
@@ -215,6 +278,8 @@ static void sdl_motors(WORD speed) {
 #else
 #define sSdl 0
 static int sdl_state(XPadState* s) { (void)s; return 0; }
+static int sdl_has_gyro(void) { return 0; }
+#define sFamily PAD_ICONS_XBOX
 static void sdl_motors(WORD speed) { (void)speed; }
 #endif
 
@@ -301,9 +366,9 @@ static void read_pointer(float* dx, float* dy) {
     sPointerX = sPointerY = 0;
 }
 
-/* A stick axis, -32768 to 32767, as -1 to 1 past a dead zone. */
+/* A stick axis, -32768 to 32767, as -1 to 1 past the dead zone. */
 static float stick_axis(SHORT v) {
-    const float kDead = 7849.0f; /* XInput's own suggestion for the left stick */
+    float kDead = g_settings.stick_dead_zone * 32767.0f / 100.0f;
     float f = (float)v;
     if (f > kDead) return (f - kDead) / (32767.0f - kDead);
     if (f < -kDead) return (f + kDead) / (32768.0f - kDead);
@@ -338,32 +403,89 @@ static void read_mouse(float* dx, float* dy) {
     last = now;
     read_sticks(&lx, &ly, &rx, &ry);
     if (!has_focus()) rx = ry = 0;
-    *dx = sMouseX * g_settings.mouse_sensitivity + rx * LOOK_STICK_PIXELS_PER_SECOND * dt;
-    *dy = (sMouseY * g_settings.mouse_sensitivity - ry * LOOK_STICK_PIXELS_PER_SECOND * dt) * (g_settings.invert_tilt ? -1 : 1);
+    *dx = (sMouseX * g_settings.mouse_sensitivity + rx * LOOK_STICK_PIXELS_PER_SECOND * g_settings.stick_speed * dt) *
+          (g_settings.invert_turn ? -1 : 1);
+    *dy = (sMouseY * g_settings.mouse_sensitivity - ry * LOOK_STICK_PIXELS_PER_SECOND * g_settings.stick_speed * dt) *
+          (g_settings.invert_tilt ? -1 : 1);
     sMouseX = sMouseY = 0;
 }
+
+static double seconds_now(void) {
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    return (double)now.QuadPart / (double)freq.QuadPart;
+}
+
+/* The minigames' gyro aiming and steering (motion.h), from what
+ * sdl_motion read. */
+static int read_gyro(float* yaw, float* pitch) {
+    int r;
+    if (!sSdl) return *yaw = *pitch = 0, 0;
+#ifdef RECOMP_SDL3
+    EnterCriticalSection(&sPadLock);
+#endif
+    r = motion_gyro_read(yaw, pitch, seconds_now());
+#ifdef RECOMP_SDL3
+    LeaveCriticalSection(&sPadLock);
+#endif
+    return r;
+}
+
+static int read_tilt(float* roll, float* pitch) {
+    int r;
+    if (!sSdl) return *roll = *pitch = 0, 0;
+#ifdef RECOMP_SDL3
+    EnterCriticalSection(&sPadLock);
+#endif
+    r = motion_tilt_read(roll, pitch, seconds_now());
+#ifdef RECOMP_SDL3
+    LeaveCriticalSection(&sPadLock);
+#endif
+    return r;
+}
+
+int input_has_gyro(void) { return sdl_has_gyro(); }
+int input_pad_family(void) { return sSdl ? sFamily : PAD_ICONS_XBOX; }
 
 static int is_mouse_button(int vk) {
     return vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2;
 }
 
 /* The pad bit of each action (ACT_*). */
-static const uint32_t kActionBit[ACT_COUNT] = {
+static const uint32_t kActionBit[BIND_COUNT] = {
     HOST_PAD_SCREEN_UP, HOST_PAD_SCREEN_DOWN, HOST_PAD_SCREEN_LEFT, HOST_PAD_SCREEN_RIGHT,
     HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, HOST_PAD_PLUS, HOST_PAD_MINUS, HOST_PAD_HOME, HOST_PAD_SHAKE, HOST_PAD_SHAKE2,
+    HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, /* the menus' */
+    HOST_PAD_2, HOST_PAD_1, HOST_PAD_A, HOST_PAD_B, /* the minigames' */
 };
+/* What the menus and minigames have bound apart; the park's don't count there. */
+#define LAYER_OWN (HOST_PAD_2 | HOST_PAD_1 | HOST_PAD_A | HOST_PAD_B)
 
-static uint32_t keyboard(void) {
-    uint32_t held = 0;
+/* Action i, bound to something held, as each layer (LAYER_*) takes it. */
+static void action_held(int i, uint32_t held[LAYERS]) {
+    int l;
+    if (i >= ACT_COUNT) held[ACT_LAYER(i)] |= kActionBit[i];
+    else {
+        for (l = 0; l < LAYERS; l++)
+            if (l == LAYER_PARK || !(kActionBit[i] & LAYER_OWN)) held[l] |= kActionBit[i];
+    }
+}
+
+/* The buttons held in each layer (LAYER_*), from the keyboard and mouse. */
+static void keyboard(uint32_t held[LAYERS]) {
     int i, k;
-    if (!has_focus()) return 0;
-    for (i = 0; i < ACT_COUNT; i++) {
+    for (i = 0; i < LAYERS; i++) held[i] = 0;
+    if (!has_focus()) return;
+    for (i = 0; i < BIND_COUNT; i++) {
         for (k = 0; k < BIND_SLOTS; k++) {
             int vk = g_settings.key[i][k];
-            if (vk && (!is_mouse_button(vk) || sButtonsLive) && (GetAsyncKeyState(vk) & 0x8000)) held |= kActionBit[i];
+            if (vk && (!is_mouse_button(vk) || sButtonsLive) && (GetAsyncKeyState(vk) & 0x8000)) {
+                action_held(i, held);
+                break;
+            }
         }
     }
-    return held;
 }
 
 /* Half the stick's travel, then the d-pad direction. */
@@ -377,7 +499,7 @@ static void controller_state(uint32_t* buttons, uint32_t* stick) {
     XPadState s;
     *buttons = *stick = 0;
     if (!pad_state(&s)) return;
-    *buttons = s.Gamepad.wButtons;
+    *buttons = settings_face_swap(s.Gamepad.wButtons);
     if (s.Gamepad.bLeftTrigger > 128) *buttons |= XPAD_LT;
     if (s.Gamepad.bRightTrigger > 128) *buttons |= XPAD_RT;
     if (s.Gamepad.sThumbLY > STICK_THRESHOLD) *stick |= XPAD_UP;
@@ -387,19 +509,24 @@ static void controller_state(uint32_t* buttons, uint32_t* stick) {
 }
 
 /* The left stick always moves, besides what the d-pad is bound to. */
-static uint32_t controller(uint32_t b, uint32_t stick) {
-    uint32_t held = 0;
+/* The buttons held in each layer (LAYER_*), from the controller. */
+static void controller(uint32_t b, uint32_t stick, uint32_t held[LAYERS]) {
+    uint32_t dirs = 0;
     int i, k;
-    for (i = 0; i < ACT_COUNT; i++) {
+    for (i = 0; i < LAYERS; i++) held[i] = 0;
+    for (i = 0; i < BIND_COUNT; i++) {
         for (k = 0; k < BIND_SLOTS; k++) {
-            if (b & g_settings.pad[i][k]) held |= kActionBit[i];
+            if (b & g_settings.pad[i][k]) {
+                action_held(i, held);
+                break;
+            }
         }
     }
-    if (stick & XPAD_UP) held |= HOST_PAD_SCREEN_UP;
-    if (stick & XPAD_DOWN) held |= HOST_PAD_SCREEN_DOWN;
-    if (stick & XPAD_LEFT) held |= HOST_PAD_SCREEN_LEFT;
-    if (stick & XPAD_RIGHT) held |= HOST_PAD_SCREEN_RIGHT;
-    return held;
+    if (stick & XPAD_UP) dirs |= HOST_PAD_SCREEN_UP;
+    if (stick & XPAD_DOWN) dirs |= HOST_PAD_SCREEN_DOWN;
+    if (stick & XPAD_LEFT) dirs |= HOST_PAD_SCREEN_LEFT;
+    if (stick & XPAD_RIGHT) dirs |= HOST_PAD_SCREEN_RIGHT;
+    for (i = 0; i < LAYERS; i++) held[i] |= dirs;
 }
 
 /* While the menu is open, and after it closes until everything held is
@@ -419,22 +546,38 @@ int input_controller_last(void) {
 
 static void preview_tick(void);
 
+/* The buttons held at the last read, as the menus and the minigames have
+ * them bound. */
+static uint32_t sMenuHeld, sGameHeld;
+
+static int read_menu(int chan, uint32_t* held) {
+    *held = sMenuHeld;
+    return chan == 0;
+}
+
+static int read_game(int chan, uint32_t* held) {
+    *held = sGameHeld;
+    return chan == 0;
+}
+
 static int read_pad(int chan, uint32_t* held) {
     static int menuHeld;
-    uint32_t buttons, stick, keys, pad;
+    uint32_t buttons, stick, keys[LAYERS], pad[LAYERS];
     if (chan != 0) return 0;
     preview_tick();
     mouse();
     controller_state(&buttons, &stick);
     menu_controller(buttons, buttons | stick);
-    keys = keyboard();
-    pad = controller(buttons, stick);
-    if (pad) sControllerLast = 1;
-    else if (keys) sControllerLast = 0;
-    *held = keys | pad;
+    keyboard(keys);
+    controller(buttons, stick, pad);
+    if (pad[0] | pad[1] | pad[2]) sControllerLast = 1;
+    else if (keys[0] | keys[1] | keys[2]) sControllerLast = 0;
+    *held = keys[LAYER_PARK] | pad[LAYER_PARK];
+    sMenuHeld = keys[LAYER_MENUS] | pad[LAYER_MENUS];
+    sGameHeld = keys[LAYER_GAMES] | pad[LAYER_GAMES];
     if (menu_is_open()) menuHeld = 1;
-    else if (menuHeld && !*held) menuHeld = 0;
-    if (menuHeld) *held = 0;
+    else if (menuHeld && !*held && !sMenuHeld && !sGameHeld) menuHeld = 0;
+    if (menuHeld) *held = sMenuHeld = sGameHeld = 0;
     return 1;
 }
 
@@ -487,10 +630,14 @@ void input_init(void) {
     sdl_init();
 #endif
     g_host_pad_read = read_pad;
+    g_host_menu_read = read_menu;
+    g_host_game_read = read_game;
     g_host_script_input = script_input;
     g_host_pad_rumble = rumble;
     g_host_mouse_read = read_mouse;
     prompts_init();
     g_host_pointer_read = read_pointer;
     g_host_sticks_read = read_sticks;
+    g_host_gyro_read = read_gyro;
+    g_host_tilt_read = read_tilt;
 }

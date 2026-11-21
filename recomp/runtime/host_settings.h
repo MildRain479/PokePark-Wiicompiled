@@ -8,12 +8,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* What can be bound: the Wii Remote's buttons, held sideways. */
+/* What can be bound: the Wii Remote's buttons, held sideways (ACT_COUNT
+ * of them, in the park), then those bound apart in two other layers: the
+ * game's menus (the title, the save files, the Pad, talking:
+ * g_host_menu_read) and the minigames (g_host_game_read). In each, these
+ * take the place of the park's 2, 1, A and B; the rest are the park's. */
 enum {
     ACT_UP, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
     ACT_2, ACT_1, ACT_A, ACT_B, ACT_PLUS, ACT_MINUS, ACT_HOME, ACT_SHAKE, ACT_SHAKE2,
-    ACT_COUNT
+    ACT_COUNT,
+    ACT_MENU_2 = ACT_COUNT, ACT_MENU_1, ACT_MENU_A, ACT_MENU_B,
+    ACT_GAME_2, ACT_GAME_1, ACT_GAME_A, ACT_GAME_B,
+    BIND_COUNT
 };
+enum { LAYER_PARK, LAYER_MENUS, LAYER_GAMES, LAYERS };
+#define LAYER_ACTS 4 /* bound apart in a layer: its 2, 1, A and B */
+/* The layer an action is in, and a layer's first action. */
+#define ACT_LAYER(act) ((act) < ACT_COUNT ? LAYER_PARK : ((act) - ACT_COUNT) / LAYER_ACTS + 1)
+#define LAYER_FIRST(layer) ((layer) == LAYER_PARK ? 0 : ACT_COUNT + ((layer) - 1) * LAYER_ACTS)
+#define LAYER_END(layer) ((layer) == LAYER_PARK ? ACT_COUNT : LAYER_FIRST(layer) + LAYER_ACTS)
 #define BIND_SLOTS 2
 
 /* Controller buttons: XInput's, plus the triggers above its 16 bits. */
@@ -30,6 +43,12 @@ enum { RENDERER_OPENGL, RENDERER_VULKAN };
  * start); 16:10 and 21:9 show more of the world above and below or at the
  * sides of the game's 16:9 (gx_canvas, gx_frames.c). */
 enum { ASPECT_4_3, ASPECT_16_9, ASPECT_16_10, ASPECT_21_9, ASPECTS };
+/* Languages: the USA game's own, and those a language pack (made from the
+ * player's disc of that language, tools/recomp/langpack.py) brings. */
+enum { LANGUAGE_EN, LANGUAGE_JP, LANGUAGES };
+/* The controller's button prompts: as the controller used last is
+ * (input_pad_family), or one kind's. */
+enum { PAD_ICONS_AUTO, PAD_ICONS_XBOX, PAD_ICONS_PLAYSTATION, PAD_ICONS_NINTENDO, PAD_ICONS };
 #define MAX_MSAA 8
 
 typedef struct {
@@ -57,17 +76,36 @@ typedef struct {
     int damage_taken;        /* damage Pikachu takes in battles, percent of the game's */
     int chase_speed;         /* the speed of the Pokémon Pikachu chases, percent of the game's */
     int autosave;            /* the game saved on making a friend or entering an area (hle_autosave.c) */
+    int language;            /* LANGUAGE_*: the game's text, from the next start (languages/<name> beside the program) */
+    int cries;               /* LANGUAGE_*: the Pokémon's voices, from the next start (the same packs) */
+    int music_volume;        /* percent, 0-100 */
+    int effects_volume;      /* percent: the sounds that aren't music or cries */
+    int cries_volume;        /* percent: the Pokémon's voices */
     float mouse_sensitivity; /* camera turn per pixel, times the default */
-    int invert_tilt;         /* mouse up looks down */
+    int invert_tilt;         /* mouse or right stick up looks down (gyro aiming's up and down too) */
+    int invert_turn;         /* mouse or right stick right turns the camera left */
+    int stick_dead_zone;     /* the sticks' dead zone, percent of the way over */
+    float stick_speed;       /* the right stick's camera turn, times the default */
+    int gyro_aim;            /* the minigames' pointer moved by turning the controller (motion.h) */
+    float gyro_speed;        /* how far, times the default */
+    int gyro_steer;          /* the steering minigames steered by tilting the controller */
+    int pad_icons;           /* PAD_ICONS_*: the controller's button prompts */
+    int nintendo_layout;     /* the face buttons swapped, A for B and X for Y: confirming on the right one */
     int check_updates;       /* ask GitHub for a newer release at start (update.c) */
-    int key[ACT_COUNT][BIND_SLOTS];      /* Windows virtual-key codes (mouse buttons too); 0 = none */
-    uint32_t pad[ACT_COUNT][BIND_SLOTS]; /* controller buttons (XPAD_*); 0 = none */
+    int key[BIND_COUNT][BIND_SLOTS];      /* Windows virtual-key codes (mouse buttons too); 0 = none */
+    uint32_t pad[BIND_COUNT][BIND_SLOTS]; /* controller buttons (XPAD_*); 0 = none */
 } HostSettings;
 
 extern HostSettings g_settings;
 
 void settings_load(void);
 void settings_save(void);
+/* A language's name ("Japanese") and its pack's folder (text and cries
+ * in it); the languages the game's text and cries started in (both change
+ * from the next start). */
+const char* settings_language_name(int lang);
+const char* settings_language_dir(int lang);
+extern int g_language_started, g_cries_started;
 void settings_default_controls(void);
 
 /* The name of the first key (or, with controller, controller button)
@@ -80,6 +118,19 @@ uint32_t settings_generation(void);
 int input_controller_last(void);
 /* A short buzz at the rumble setting's strength (input_win32.c). */
 void input_rumble_preview(void);
+/* Whether a controller (or the handheld) with a gyroscope is there. */
+int input_has_gyro(void);
+/* The kind of controller used last, by its maker (PAD_ICONS_XBOX for
+ * any but Sony's and Nintendo's). */
+int input_pad_family(void);
+/* The face buttons as the Nintendo layout setting has them: A for B, X
+ * for Y (the bindings are by where the button is, as an Xbox
+ * controller's). */
+static inline uint32_t settings_face_swap(uint32_t b) {
+    enum { A = 0x1000, B = 0x2000, X = 0x4000, Y = 0x8000 };
+    if (!g_settings.nintendo_layout) return b;
+    return (b & ~(uint32_t)(A | B | X | Y)) | (b & A ? B : 0) | (b & B ? A : 0) | (b & X ? Y : 0) | (b & Y ? X : 0);
+}
 /* Sets up the button prompt icons (prompts.c). */
 void prompts_init(void);
 
@@ -87,16 +138,23 @@ void prompts_init(void);
 enum { SET_FULLSCREEN, SET_SCALE, SET_MSAA, SET_FRAME_RATE, SET_FOV, SET_SENSITIVITY, SET_INVERT, SET_ANISO,
        SET_RUMBLE, SET_TEXT_SPEED, SET_BERRIES, SET_PRICES,
        SET_DAMAGE_DEALT, SET_DAMAGE_TAKEN, SET_CHASE_SPEED, SET_RENDERER, SET_TOUCH, SET_UPDATES, SET_MINIMAP_TOP,
-       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT, SET_TEXTURE_PACK, SET_AUTOSAVE };
+       SET_DUAL_SCREEN, SET_SWAP_SCREENS, SET_FRIENDS_LIST, SET_ASPECT, SET_TEXTURE_PACK, SET_AUTOSAVE,
+       SET_LANGUAGE, SET_CRIES, SET_MUSIC_VOLUME, SET_EFFECTS_VOLUME, SET_CRIES_VOLUME,
+       SET_INVERT_TURN, SET_DEAD_ZONE, SET_STICK_SPEED, SET_GYRO_AIM, SET_GYRO_SPEED, SET_GYRO_STEER,
+       SET_PAD_ICONS, SET_NINTENDO_LAYOUT };
 /* Changes a setting a step (d: -1 or 1; on and off settings flip), applies
  * and saves it. */
 void settings_step(int which, int d);
 /* Binds key vk (or, if 0, controller button pad) to action act's slot,
- * taking it off any other (one key or button does one thing), and saves. */
+ * taking it off any other in its layer (one key or button does one thing
+ * in each), and saves. */
 void settings_bind(int act, int slot, int vk, uint32_t pad);
 /* Names, as the menus show them: "-" for none. */
 void settings_key_name(int vk, char* out, size_t n);
 const char* settings_pad_name(uint32_t b);
+/* The same as the controller in hand labels it (a PlayStation one's
+ * Cross, a Nintendo one's B), with the Nintendo layout's swap. */
+const char* settings_pad_label(uint32_t b);
 
 /* The update check (update.c): update_check starts it (if the setting is
  * on and it hasn't found an answer), update_state says how it went, and,
