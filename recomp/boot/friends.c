@@ -321,7 +321,7 @@ static void draw_note(const char* name, Rect src, const char* what, const char* 
         Rect dst = {x0, y - 30, x0 + 60 * (src.x1 - src.x0) / (src.y1 - src.y0), y + 30};
         draw_image(img, w, h, src, dst, 0xFFFFFF, 0);
     }
-    draw_text(what, x0 + 76, y, 40, ALIGN_LEFT, BROWN, 0, 0, 1, 0);
+    draw_text(what, x0 + 76, y, 40, ALIGN_LEFT, BROWN, 0, 0, 1, x1 - x0 - 170);
     draw_number(number, x1, y + 2, 34);
 }
 
@@ -375,7 +375,7 @@ static int book_step(int k) {
          * where the map goes. */
         Rect shadow = {m.x0 - PHOTO_EDGE + 6, m.y0 - PHOTO_EDGE + 8, m.x1 + PHOTO_EDGE + 6, m.y1 + CAPTION + 8};
         Rect border = {m.x0 - PHOTO_EDGE, m.y0 - PHOTO_EDGE, m.x1 + PHOTO_EDGE, m.y1 + CAPTION};
-        draw_text("Map", (m.x0 + m.x1) / 2, r.y0 + 0.085f * REF_H, 54, ALIGN_CENTRE, BROWN, 0, 0, 1, 0);
+        draw_text("Map", (m.x0 + m.x1) / 2, r.y0 + 0.085f * REF_H, 54, ALIGN_CENTRE, BROWN, 0, 0, 1, m.x1 - m.x0);
         draw_box(shadow, 6, 0x50000000u | (EDGE & 0xFFFFFF));
         draw_box(border, 4, PHOTO);
         draw_box(m, 1, BEHIND);

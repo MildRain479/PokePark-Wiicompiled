@@ -144,8 +144,10 @@ def build_msvc(common, targets, opt):
     if VULKAN:
         inc += f' /I"{os.path.join(VULKAN, "Include")}"'
     defs = " ".join(f"/D{d}" for d in DEFINES)
-    # The generated code relies on wrapping unsigned arithmetic only.
-    flags = f"/nologo {opt} /MP /W0 /fp:precise /Zi {defs} {inc}"
+    # The generated code relies on wrapping unsigned arithmetic only. The
+    # sources are UTF-8 (hle_text.c's instructions in Japanese and accented
+    # languages), and so are its strings, as clang has them for Android.
+    flags = f"/nologo {opt} /MP /W0 /fp:precise /Zi /utf-8 {defs} {inc}"
     bat = os.path.join(OUT, "build.bat")
     objdir = OBJ
     with open(bat, "w") as f:

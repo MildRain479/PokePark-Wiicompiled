@@ -2,6 +2,7 @@
 language, taken from the player's own disc of that language.
 
     python tools/recomp/langpack.py USA_FILES OTHER_FILES OUT [--english-credits]
+    python tools/recomp/langpack.py USA_FILES PAL_FILES OUT --pal=Fr|Ge|Sp|It
 
 USA_FILES and OTHER_FILES are the "files" folders of the two extracted
 discs (dtk's layout: <disc>/files); OUT is the pack's folder, for example
@@ -33,6 +34,17 @@ The staff roll (Message/StaffRoll.bmg) is a different list: STAFF_ROLL
 says which other-disc message each USA one takes. The Japanese team and
 voice cast come from the other disc; the English localization's staff
 stay. --english-credits keeps the whole USA staff roll.
+
+The European disc (R8AP01) has five languages, each in archives of its
+own: <name>_Fr.dac (French), _Ge (German), _Sp (Spanish) and _It
+(Italian) beside <name>.dac (English), nested ones too
+(Field/Ar02Zn01Dat_Fr.dac holds Temporary/Field/ParkAr02Zn01Dat_Fr.dan),
+with the USA's inner paths (Message/<name>.bmg) and the USA's font. --pal
+says which: each USA archive takes the text and pictures of the archive
+of the same name with that ending. Their staff rolls are in English, with
+Europe's localization staff in place of America's: the USA one stays. The
+sounds are Sound/Delhi_Fr.brsar and Delhi_Ge.brsar (French and German
+voices); Spanish and Italian have the English ones, so no cries.
 
 The game makes the same pack itself (recomp/boot/langpack.c, from
 Options > Gameplay > Language pack); this script is its reference.
@@ -449,20 +461,32 @@ def brres_swap(usa, other):
 
 # ---------------------------------------------------------------------------
 
-def find_other_message(other_files, name):
+def find_other_message(other_files, name, exact=None):
     """Message/<lang>/<name>.bmg anywhere in the other disc's archive of
-    the same path, any letter case."""
+    the same path, any letter case; with exact (the European disc), that
+    path itself."""
     want = name.lower()
     for p, _, off, sz in other_files:
+        if exact is not None:
+            if p == exact:
+                return p, off, sz
+            continue
         parts = p.split("/")
         if len(parts) == 3 and parts[0] == "Message" and parts[2].lower() == want:
             return p, off, sz
     return None
 
 
-def swap(usa, other, usa_path, credits, log):
+def with_suffix(path, suffix):
+    """A path with suffix before its extension (PAL's language archives)."""
+    base, ext = os.path.splitext(path)
+    return base + suffix + ext
+
+
+def swap(usa, other, usa_path, credits, log, suffix=None):
     """usa (an uncompressed archive) with its text from other; None if
-    nothing in it changed."""
+    nothing in it changed. suffix: the European disc's language ending,
+    on nested archives' names there."""
     files = u8_files(usa)
     ofiles = u8_files(other) if other is not None else []
     new = {}
@@ -471,25 +495,25 @@ def swap(usa, other, usa_path, credits, log):
         theirs = None
         if other is not None:
             for q, _, o2, s2 in ofiles:
-                if q == p:
+                if q == p or (suffix and q == with_suffix(p, suffix)):
                     theirs = other[o2:o2 + s2]
                     break
         if body[:4] == U8_MAGIC and theirs is not None and theirs[:4] == U8_MAGIC:
-            got = swap(body, theirs, usa_path + "::" + p, credits, log)
+            got = swap(body, theirs, usa_path + "::" + p, credits, log, suffix)
             if got is not None:
                 new[node] = got
         elif body[:1] == b"\x11" and p.endswith((".dan", ".dac", ".arc")) and theirs is not None:
             inner = lz11_decompress(body)
             if inner[:4] == U8_MAGIC:
-                got = swap(inner, lz11_decompress(theirs), usa_path + "::" + p, credits, log)
+                got = swap(inner, lz11_decompress(theirs), usa_path + "::" + p, credits, log, suffix)
                 if got is not None:
                     new[node] = lz11_compress(got)
         elif p.startswith("Message/") and p.count("/") == 1 and p.endswith(".bmg"):
             name = p.split("/")[1]
-            if name == "StaffRoll.bmg" and not credits:
+            if name == "StaffRoll.bmg" and (not credits or suffix):
                 log(f"  {usa_path}: {p} kept (English credits)")
                 continue
-            hit = find_other_message(ofiles, name)
+            hit = find_other_message(ofiles, name, p if suffix else None)
             if not hit:
                 log(f"  {usa_path}: {p} has no counterpart; kept")
                 continue
@@ -542,11 +566,11 @@ def brsar_tables(path):
     return tuple(count(ref(i * 8)) for i in range(5))
 
 
-def cries(usa_root, other_root, out_root):
+def cries(usa_root, other_root, out_root, suffix=""):
     usa = os.path.join(usa_root, "Sound", "Delhi.brsar")
-    other = os.path.join(other_root, "Sound", "Delhi.brsar")
+    other = os.path.join(other_root, "Sound", "Delhi" + suffix + ".brsar")
     if not os.path.exists(other):
-        print("no Sound/Delhi.brsar on the other disc: no cries")
+        print(f"no Sound/Delhi{suffix}.brsar on the other disc: no cries")
         return
     a, b = brsar_tables(usa), brsar_tables(other)
     if a is None or a != b:
@@ -561,6 +585,11 @@ def cries(usa_root, other_root, out_root):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     credits = "--english-credits" not in sys.argv
+    pal = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--pal=")]
+    if pal and pal[0] not in ("Fr", "Ge", "Sp", "It"):
+        print(__doc__)
+        return 1
+    suffix = "_" + pal[0] if pal else None
     if len(args) != 3:
         print(__doc__)
         return 1
@@ -571,7 +600,7 @@ def main():
             if not f.endswith((".dac", ".dan", ".arc")):
                 continue
             rel = os.path.relpath(os.path.join(d, f), usa_root).replace("\\", "/")
-            op = os.path.join(other_root, rel)
+            op = os.path.join(other_root, with_suffix(rel, suffix) if suffix else rel)
             if not os.path.exists(op):
                 continue
             raw = open(os.path.join(d, f), "rb").read()
@@ -581,7 +610,7 @@ def main():
             other = lz11_decompress(oraw) if oraw[:1] == b"\x11" else oraw
             if usa[:4] != U8_MAGIC or other[:4] != U8_MAGIC:
                 continue
-            got = swap(usa, other, rel, credits, print)
+            got = swap(usa, other, rel, credits, print, suffix)
             if got is None:
                 continue
             dst = os.path.join(out_root, "text", "files", rel)
@@ -591,7 +620,7 @@ def main():
             made += 1
             print(f"{rel}: {len(raw)} -> {os.path.getsize(dst)} bytes")
     print(f"{made} archives written to {out_root}/text")
-    cries(usa_root, other_root, out_root)
+    cries(usa_root, other_root, out_root, suffix or "")
     return 0
 
 

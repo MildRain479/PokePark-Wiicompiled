@@ -13,6 +13,7 @@
 
 #include "host_settings.h"
 #include "langpack.h"
+#include "translate.h"
 
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -59,7 +60,7 @@ static void work(void* arg) {
     char tmp[1100], id[7] = "", path[1200], *slash;
     LangDisc usa, other;
     FILE* f;
-    int lang, code;
+    int code;
     (void)arg;
     /* Beside the packs, on the same drive: languages\.disc */
     snprintf(tmp, sizeof(tmp), "%s", settings_language_dir(LANGUAGE_JP));
@@ -83,9 +84,9 @@ static void work(void* arg) {
     } else {
         fread(id, 1, 6, f);
         fclose(f);
-        if ((lang = langpack_language_of(id)) < 0) {
+        if (langpack_language_of(id) < 0) {
             char m[160];
-            snprintf(m, sizeof(m), "%s is not a Japanese disc (R8AJ01)", id);
+            snprintf(m, sizeof(m), tr(LANGPACK_WHICH_DISCS), id);
             langpack_fail(m);
         } else if (!langdisc_folder(&other, tmp)) {
             langpack_fail("The disc image's files couldn't be read");
@@ -93,7 +94,7 @@ static void work(void* arg) {
             if (!hle_dvd_root()[0] || !langdisc_folder(&usa, hle_dvd_root())) {
                 langpack_fail("The game's own files couldn't be read");
             } else {
-                langpack_run(lang, &usa, &other);
+                langpack_run_disc(id, &usa, &other);
                 langdisc_free(&usa);
             }
             langdisc_free(&other);
@@ -120,7 +121,7 @@ void langpack_choose(void) {
                       "All files (*.*)\0*.*\0";
     ofn.lpstrFile = sImage;
     ofn.nMaxFile = sizeof(sImage);
-    ofn.lpstrTitle = "Choose your copy of PokePark Wii in another language (Japanese)";
+    ofn.lpstrTitle = "Choose your copy of PokePark Wii in another language (Japanese or European)";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameA(&ofn)) return;
     langpack_set_running("Reading the disc image");

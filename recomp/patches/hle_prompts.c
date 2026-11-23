@@ -185,15 +185,26 @@ int hle_font_glyph(uint16_t code, uint8_t* cov, int* left, int* advance) {
  * there is redrawn as the icon for what is bound to it, in the
  * colours the texture has: a white key, outlined in the button's own
  * colour (the bar's, a coloured ring) or dark grey (the others, all
- * greys), with a white edge, as the words beside it are drawn. */
+ * greys), with a white edge, as the words beside it are drawn.
+ *
+ * Where a button is was measured in the USA's pictures; a language pack's
+ * (hle_dvd_overlay) have their words in other places, and their buttons
+ * with them: the bubble's buttons stand at the left of each line, after
+ * as much room as its words leave, and the title's "2" before or after
+ * them. Those spots are found again in the pictures as loaded: the
+ * bubble's button is the leftmost mark in its line, the title's the one
+ * mark there that is a button's size and square. */
 
 #define MAX_COLOURS 256
 #define MAX_PICTURES 8
 #define EDGE 2 /* the white edge around an icon */
 
+enum { FIND_NONE, FIND_LEFT, FIND_SQUARE };
+
 typedef struct {
     int x0, y0, x1, y1; /* inclusive */
     uint32_t button;
+    int find; /* how it is found in a language's picture (FIND_*) */
 } Spot;
 
 static const Spot kBarSpots[] = {
@@ -202,11 +213,13 @@ static const Spot kBarSpots[] = {
     {42, 202, 77, 237, HOST_PAD_SCREEN_UP}, /* the d-pad */
 };
 static const Spot kBubbleSpots[] = {
-    {10, 39, 36, 67, HOST_PAD_2}, {18, 69, 44, 97, HOST_PAD_2}, {9, 99, 35, 127, HOST_PAD_2}, /* with their glow */
+    /* with their glow */
+    {10, 39, 36, 67, HOST_PAD_2, FIND_LEFT}, {18, 69, 44, 97, HOST_PAD_2, FIND_LEFT}, {9, 99, 35, 127, HOST_PAD_2, FIND_LEFT},
 };
 static const Spot kTitleSpots[] = {
-    {296, 2, 331, 37, HOST_PAD_2},
+    {296, 2, 331, 37, HOST_PAD_2, FIND_SQUARE},
 };
+#define MAX_SPOTS 8
 
 static const struct Kind {
     const char* name;
@@ -228,6 +241,7 @@ typedef struct {
     int colours;
     uint8_t rgba[MAX_COLOURS][4];
     uint8_t* original; /* the game's indices, w x h */
+    Spot spots[MAX_SPOTS]; /* where its buttons are */
 } Picture;
 
 static Picture sPictures[MAX_PICTURES];
@@ -372,7 +386,134 @@ static void draw_pictures(void) {
             sPictures[i--] = sPictures[--sPictureCount];
             continue;
         }
-        for (k = 0; k < b->kind->spotCount; k++) draw_spot(b, &b->kind->spots[k]);
+        for (k = 0; k < b->kind->spotCount; k++) draw_spot(b, &b->spots[k]);
+    }
+}
+
+/* Whether column x of the picture has a mark (anything not clear) in rows
+ * y0 to y1. */
+static int column_marked(const Picture* b, int x, int y0, int y1) {
+    int y;
+    for (y = y0 < 0 ? 0 : y0; y <= y1 && y < b->kind->h; y++) {
+        if (b->rgba[b->original[y * b->kind->w + x]][3]) return 1;
+    }
+    return 0;
+}
+
+/* The bar's "1 Back" is followed by the next button where the English
+ * word ends, a little after (x 103: German's "Zurück" just fits): in the
+ * PAL games a longer word runs under that button ("Retou" in French,
+ * "Indiet" in Italian). Such a word is squeezed across, in the picture,
+ * to end there. */
+typedef struct {
+    int y0, y1; /* the line, inclusive */
+    int x0;     /* where its word starts, after the button */
+    int limit;  /* the last column the word may have */
+} Fit;
+static const Fit kBarFits[] = {
+    {0, 39, 40, 103},
+};
+
+static void fit_words(Picture* b) {
+    int f, W = b->kind->w;
+    if (b->kind->spots != kBarSpots) return;
+    for (f = 0; f < (int)(sizeof(kBarFits) / sizeof(kBarFits[0])); f++) {
+        const Fit* fit = &kBarFits[f];
+        int end = -1, x, y, clear = nearest(b, 0, 0, 0, 0);
+        float k;
+        /* The word's end: its last marked column before the gap to the
+         * line's second word, if any. */
+        for (x = fit->x0; x < W / 2 + 22; x++) {
+            if (column_marked(b, x, fit->y0, fit->y1)) end = x;
+            else if (end >= 0 && x - end > 8) break;
+        }
+        if (end <= fit->limit) continue;
+        k = (float)(end + 1 - fit->x0) / (float)(fit->limit + 1 - fit->x0);
+        for (y = fit->y0; y <= fit->y1; y++) {
+            uint8_t* row = b->original + y * W;
+            uint8_t was[256];
+            memcpy(was, row, (size_t)W);
+            for (x = fit->x0; x <= end; x++) {
+                float s0, s1, s, sum[4] = {0, 0, 0, 0}, weight = 0;
+                int c = clear;
+                if (x <= fit->limit) {
+                    /* The colour of the columns it now stands for, by how
+                     * much of each, weighted by their alpha. */
+                    s0 = fit->x0 + (x - fit->x0) * k;
+                    s1 = s0 + k;
+                    for (s = s0; s < s1 - 0.001f;) {
+                        int sx = (int)s;
+                        float next = (float)(sx + 1) < s1 ? (float)(sx + 1) : s1, part = next - s;
+                        const uint8_t* p = b->rgba[was[sx]];
+                        sum[0] += p[0] * p[3] * part;
+                        sum[1] += p[1] * p[3] * part;
+                        sum[2] += p[2] * p[3] * part;
+                        sum[3] += p[3] * part;
+                        weight += part;
+                        s = next;
+                    }
+                    if (sum[3] > 0)
+                        c = nearest(b, (int)(sum[0] / sum[3]), (int)(sum[1] / sum[3]), (int)(sum[2] / sum[3]),
+                                    (int)(sum[3] / weight + 0.5f));
+                }
+                row[x] = (uint8_t)c;
+                ST8(ci8_byte(b->image, W, x, y), (uint8_t)c);
+            }
+        }
+        HLE_LOG("prompts: %s line %d's word squeezed from x %d to %d", b->kind->name, f, end, fit->limit);
+    }
+}
+
+/* Where each button of the picture is, as loaded (see above). */
+static void find_spots(Picture* b) {
+    int k, W = b->kind->w;
+    for (k = 0; k < b->kind->spotCount && k < MAX_SPOTS; k++) {
+        const Spot* was = &b->kind->spots[k];
+        Spot* at = &b->spots[k];
+        int w = was->x1 - was->x0 + 1, h = was->y1 - was->y0 + 1, x;
+        *at = *was;
+        if (was->find == FIND_LEFT) {
+            for (x = 0; x < W / 2 && !column_marked(b, x, was->y0, was->y1); x++) {}
+            if (x < W / 2) {
+                at->x0 = x > 0 ? x - 1 : 0;
+                at->x1 = at->x0 + w - 1;
+            }
+        } else if (was->find == FIND_SQUARE) {
+            /* Marks: runs of marked columns, in rows a little past the
+             * spot's own. */
+            int y0 = was->y0 - 4, y1 = was->y1 + 8, start;
+            for (x = 0; x < W;) {
+                int top = -1, bottom = -1, y, mw, mh;
+                if (!column_marked(b, x, y0, y1)) {
+                    x++;
+                    continue;
+                }
+                for (start = x; x < W && column_marked(b, x, y0, y1); x++) {}
+                for (y = y0 < 0 ? 0 : y0; y <= y1 && y < b->kind->h; y++) {
+                    int c;
+                    for (c = start; c < x && !b->rgba[b->original[y * W + c]][3]; c++) {}
+                    if (c < x) {
+                        if (top < 0) top = y;
+                        bottom = y;
+                    }
+                }
+                mw = x - start;
+                mh = bottom - top + 1;
+                if (mw >= w - 8 && mw <= w + 2 && mh >= h - 8 && mh <= h + 2 && mw - mh <= 3 && mh - mw <= 3) {
+                    at->x0 = start + mw / 2 - w / 2;
+                    at->y0 = top + mh / 2 - h / 2;
+                    if (at->x0 < 0) at->x0 = 0;
+                    if (at->y0 < 0) at->y0 = 0;
+                    at->x1 = at->x0 + w - 1;
+                    at->y1 = at->y0 + h - 1;
+                    break;
+                }
+            }
+        }
+        if (at->x1 >= W || at->y1 >= b->kind->h) *at = *was;
+        if (at->x0 != was->x0 || at->y0 != was->y0)
+            HLE_LOG("prompts: %s button %d at %d,%d (the USA's %d,%d)", b->kind->name, k, at->x0, at->y0, was->x0,
+                    was->y0);
     }
 }
 
@@ -432,6 +573,8 @@ void f_801B3090(ppc_t* c) {
     for (y = 0; y < kind->h; y++) {
         for (x = 0; x < kind->w; x++) b->original[y * kind->w + x] = LD8(ci8_byte(b->image, kind->w, x, y));
     }
+    fit_words(b);
+    find_spots(b);
     sGeneration = 0xFFFFFFFFu; /* draw it */
 }
 

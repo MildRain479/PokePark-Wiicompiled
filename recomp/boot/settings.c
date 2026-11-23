@@ -83,8 +83,8 @@ int g_language_started, g_cries_started;
 /* ------------------------------------------------------------------------ */
 /* Languages */
 
-static const char* const kLanguageNames[LANGUAGES] = {"English", "Japanese"};
-static const char* const kLanguageIni[LANGUAGES] = {"english", "japanese"};
+static const char* const kLanguageNames[LANGUAGES] = {"English", "Japanese", "French", "German", "Italian", "Spanish"};
+static const char* const kLanguageIni[LANGUAGES] = {"english", "japanese", "french", "german", "italian", "spanish"};
 
 const char* settings_language_name(int lang) { return lang >= 0 && lang < LANGUAGES ? kLanguageNames[lang] : ""; }
 
@@ -316,13 +316,13 @@ void settings_save(void) {
             g_settings.chase_speed);
     fprintf(f, "autosave = %d ; 1: save the game on making a friend or entering an area\n\n", g_settings.autosave);
     fprintf(f, "[language]\n");
-    fprintf(f, "text = %s ; english, or japanese: a language pack in languages/Japanese (tools/recomp/langpack.py), from the next start\n\n",
+    fprintf(f, "text = %s ; english, or japanese, french, german, italian or spanish: a language pack in languages/<Name> (made from that disc), from the next start\n\n",
             kLanguageIni[g_settings.language]);
     fprintf(f, "[audio] ; volumes in percent: 0-100, in tens\n");
     fprintf(f, "music = %d\n", g_settings.music_volume);
     fprintf(f, "effects = %d ; the sounds that aren't music or cries\n", g_settings.effects_volume);
     fprintf(f, "cries_volume = %d ; the Pokemon's voices\n", g_settings.cries_volume);
-    fprintf(f, "cries = %s ; the Pokemon's voices: english, or japanese (from the language pack), from the next start\n\n",
+    fprintf(f, "cries = %s ; the Pokemon's voices: english, or japanese, french or german (from the language pack), from the next start\n\n",
             kLanguageIni[g_settings.cries]);
     fprintf(f, "[updates]\n");
     fprintf(f, "check = %d ; 1: at start, ask GitHub whether a newer version is out\n\n", g_settings.check_updates);

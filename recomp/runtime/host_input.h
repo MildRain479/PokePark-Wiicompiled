@@ -72,3 +72,13 @@ extern uint32_t (*g_host_prompt_generation)(void);
  * the device used last, as the settings menu shows it ("Q", "LB"); "" if
  * nothing is. For text that names it (hle_text.c). */
 extern void (*g_host_button_name)(uint32_t button, char* out, int n);
+/* Which of the minigames' motion is on, with a gyroscope to give it
+ * (HOST_MOTION_*), and whether what the player holds that has it is the
+ * handheld itself (else a controller): for text that says to tilt or turn
+ * it (hle_text.c). */
+enum { HOST_MOTION_AIM = 1, HOST_MOTION_STEER = 2 };
+extern int (*g_host_motion_text)(int* handheld);
+/* The language the game's text started in (host_settings.h's LANGUAGE_*,
+ * in this order), for text written in it (hle_text.c). */
+enum { HOST_TEXT_EN, HOST_TEXT_JP, HOST_TEXT_FR, HOST_TEXT_DE, HOST_TEXT_IT, HOST_TEXT_ES, HOST_TEXTS };
+extern int (*g_host_text_language)(void);

@@ -44,8 +44,9 @@ enum { RENDERER_OPENGL, RENDERER_VULKAN };
  * sides of the game's 16:9 (gx_canvas, gx_frames.c). */
 enum { ASPECT_4_3, ASPECT_16_9, ASPECT_16_10, ASPECT_21_9, ASPECTS };
 /* Languages: the USA game's own, and those a language pack (made from the
- * player's disc of that language, tools/recomp/langpack.py) brings. */
-enum { LANGUAGE_EN, LANGUAGE_JP, LANGUAGES };
+ * player's disc of that language, tools/recomp/langpack.py) brings: the
+ * Japanese disc's, and the European disc's four. */
+enum { LANGUAGE_EN, LANGUAGE_JP, LANGUAGE_FR, LANGUAGE_DE, LANGUAGE_IT, LANGUAGE_ES, LANGUAGES };
 /* The controller's button prompts: as the controller used last is
  * (input_pad_family), or one kind's. */
 enum { PAD_ICONS_AUTO, PAD_ICONS_XBOX, PAD_ICONS_PLAYSTATION, PAD_ICONS_NINTENDO, PAD_ICONS };

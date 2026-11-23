@@ -29,6 +29,7 @@
 
 #include "canvas.h"
 #include "langpack.h"
+#include "translate.h"
 #include "wii_save.h"
 
 int hle_pause_main_page(void); /* hle_pause.c */
@@ -203,15 +204,15 @@ static int pack_has(int lang, const char* what) {
     FILE* f;
     if (lang == LANGUAGE_EN) return 1;
     snprintf(path, sizeof(path), "%s/%s/files/%s", settings_language_dir(lang), what,
-             what[0] == 't' ? "Archive/PrepareMessageRes.dac" : "Sound/Delhi.brsar");
+             what[0] == 't' ? "Archive/PrepareMessageDat.dac" : "Sound/Delhi.brsar");
     if (!(f = fopen(path, "rb"))) return 0;
     fclose(f);
     return 1;
 }
 
 static void language_text(int lang, int started, const char* what, char* out, size_t n) {
-    snprintf(out, n, "%s%s", settings_language_name(lang),
-             !pack_has(lang, what) ? " (no pack)" : lang != started ? " (restart)" : "");
+    snprintf(out, n, "%s%s", tr(settings_language_name(lang)),
+             tr(!pack_has(lang, what) ? " (no pack)" : lang != started ? " (restart)" : ""));
 }
 
 static void setting_text(int which, char* out, size_t n) {
@@ -225,7 +226,8 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_FULLSCREEN: snprintf(out, n, g_settings.fullscreen ? "On" : "Off"); break;
     case SET_SCALE:
         s = g_settings.scale ? g_settings.scale : display_scale();
-        snprintf(out, n, g_settings.scale ? "%dx" : "Auto (%dx)", s);
+        if (g_settings.scale) snprintf(out, n, "%dx", s);
+        else snprintf(out, n, "%s (%dx)", tr("Auto"), s);
         break;
     case SET_MSAA:
         if (g_settings.msaa == 1) snprintf(out, n, "Off");
@@ -240,7 +242,7 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_NINTENDO_LAYOUT: snprintf(out, n, g_settings.nintendo_layout ? "On" : "Off"); break;
     case SET_PAD_ICONS: {
         static const char* const kKind[PAD_ICONS] = {"Auto", "Xbox", "PlayStation", "Nintendo"};
-        if (g_settings.pad_icons == PAD_ICONS_AUTO) snprintf(out, n, "Auto (%s)", kKind[input_pad_family()]);
+        if (g_settings.pad_icons == PAD_ICONS_AUTO) snprintf(out, n, "%s (%s)", tr("Auto"), kKind[input_pad_family()]);
         else snprintf(out, n, "%s", kKind[g_settings.pad_icons]);
         break;
     }
@@ -249,8 +251,8 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_GYRO_SPEED: snprintf(out, n, "%.1f", g_settings.gyro_speed); break;
     case SET_GYRO_AIM:
     case SET_GYRO_STEER:
-        snprintf(out, n, "%s%s", (which == SET_GYRO_AIM ? g_settings.gyro_aim : g_settings.gyro_steer) ? "On" : "Off",
-                 input_has_gyro() ? "" : " (no gyro)");
+        snprintf(out, n, "%s%s", tr((which == SET_GYRO_AIM ? g_settings.gyro_aim : g_settings.gyro_steer) ? "On" : "Off"),
+                 input_has_gyro() ? "" : tr(" (no gyro)"));
         break;
     case SET_TOUCH: snprintf(out, n, g_settings.touch_controls ? "On" : "Off"); break;
     case SET_MINIMAP_TOP: snprintf(out, n, g_settings.minimap_top ? "On" : "Off"); break;
@@ -261,17 +263,18 @@ static void setting_text(int which, char* out, size_t n) {
     case SET_ANISO: snprintf(out, n, g_settings.aniso == 1 ? "Original" : "%dx", g_settings.aniso); break;
     case SET_TEXTURE_PACK:
         if (!texpack_count()) snprintf(out, n, "None found");
-        else snprintf(out, n, g_settings.texture_pack ? "On (%d)" : "Off", texpack_count());
+        else if (g_settings.texture_pack) snprintf(out, n, "%s (%d)", tr("On"), texpack_count());
+        else snprintf(out, n, "Off");
         break;
     case SET_ASPECT: {
         static const char* const kShape[ASPECTS] = {"4:3", "16:9", "16:10", "21:9"};
         snprintf(out, n, "%s%s", kShape[g_settings.aspect],
-                 (g_settings.aspect == ASPECT_4_3) == hle_widescreen() ? " (restart)" : "");
+                 (g_settings.aspect == ASPECT_4_3) == hle_widescreen() ? tr(" (restart)") : "");
         break;
     }
     case SET_RENDERER:
         snprintf(out, n, "%s%s", g_settings.renderer == RENDERER_VULKAN ? "Vulkan" : "OpenGL",
-                 g_settings.renderer != display_renderer() ? " (restart)" : "");
+                 g_settings.renderer != display_renderer() ? tr(" (restart)") : "");
         break;
     case SET_RUMBLE: {
         static const char* const kRumble[4] = {"Off", "Light", "Normal", "Strong"};
@@ -299,7 +302,7 @@ static void setting_text(int which, char* out, size_t n) {
         break;
     case SET_UPDATES:
         s = update_state();
-        if (s == UPDATE_NEWER) snprintf(out, n, "%s is out", update_tag());
+        if (s == UPDATE_NEWER) snprintf(out, n, tr("%s is out"), update_tag());
         else snprintf(out, n, "%s", s == UPDATE_OFF ? "Off" : s == UPDATE_CHECKING ? "Checking" : s == UPDATE_CURRENT ? "Up to date" : "Can't check");
         break;
     default: *out = 0;
@@ -460,6 +463,17 @@ static void import_save(void) {
     sImportShown = sChanges;
 }
 
+/* Making a language pack from a disc (its picker first). */
+static void langpack_start(void) {
+#ifdef __ANDROID__
+    sLangpackWanted = 1; /* (as the import, below) */
+#else
+    langpack_choose();
+    sGrace = 30;
+#endif
+    changed();
+}
+
 static void select_(void) {
     Row r;
     if (!sOnRows) {
@@ -469,6 +483,10 @@ static void select_(void) {
     r = row_at(sSection, sRow);
     if (r.kind == ROW_SETTING && r.which == SET_UPDATES && update_state() == UPDATE_NEWER) {
         update_open(); /* its page, to download it from */
+    } else if (r.kind == ROW_SETTING && r.which == SET_LANGUAGE && !pack_has(g_settings.language, "text")) {
+        langpack_start(); /* a language with no pack yet: make it */
+    } else if (r.kind == ROW_SETTING && r.which == SET_CRIES && !pack_has(g_settings.cries, "cries")) {
+        langpack_start();
     } else if (r.kind == ROW_SETTING) {
         settings_step(r.which, 1);
     } else if (r.kind == ROW_BINDING) {
@@ -493,13 +511,7 @@ static void select_(void) {
 #endif
         return;
     } else if (r.kind == ROW_LANGPACK) {
-#ifdef __ANDROID__
-        sLangpackWanted = 1; /* (as the import, above) */
-#else
-        langpack_choose();
-        sGrace = 30;
-#endif
-        changed();
+        langpack_start();
         return;
     } else if (r.kind == ROW_CLOSE) {
         if (close_armed()) exit(0); /* as closing the window does */
@@ -652,7 +664,7 @@ static void draw_file_button(const char* name) {
     /* Over it, a newer release's news (Options' Updates row opens its page). */
     if (update_state() == UPDATE_NEWER) {
         char news[64];
-        snprintf(news, sizeof(news), "Update: %s", update_tag());
+        snprintf(news, sizeof(news), tr("Update: %s"), update_tag());
         draw_text(news, (kFileButton.x0 + kFileButton.x1) / 2, 632, 40, ALIGN_CENTRE, 0xFFFFFFFFu, 0xFF7A2020u, 3.0f,
                   1, kFileButton.x1 - kFileButton.x0);
     }
@@ -683,9 +695,9 @@ static const Rect kLeaves = {1, 4, 63, 232}, kLeavesAt = {1342, 46, 1466, 504};
 static void draw_pages(void) {
     draw_picture("PmPocketbookR", "PmPocketbookRA", kWhole, kRightPage, 0xFFFFFF);
     draw_picture("PmReaf01", "PmReaf01A", kLeaves, kLeavesAt, 0xFFFFFF);
-    if (sFrom == FROM_PAD) draw_tab("Pok\xE9Park Pad", 0); /* the font's Latin-1 */
+    if (sFrom == FROM_PAD) draw_tab("Pok\xC3\xA9Park Pad", 0); /* UTF-8; tr() names it as the game does */
     draw_picture("PmPocketbookL01", "PmPocketbookL01A", kWhole, kLeftPage, 0xFFFFFF);
-    draw_text("Options", 450, 104, 54, ALIGN_CENTRE, BROWN, 0, 0, 1, 0);
+    draw_text("Options", 450, 104, 54, ALIGN_CENTRE, BROWN, 0, 0, 1, 360);
 }
 
 static void draw_book(void) {
@@ -714,10 +726,10 @@ static void draw_book(void) {
     }
 
     /* The section's settings, a bar each as the Pad's counts are shown. */
-    draw_text(kSection[sSection], 1192, 88, 52, ALIGN_CENTRE, BROWN, 0, 0, 1, 0);
+    draw_text(kSection[sSection], 1192, 88, 52, ALIGN_CENTRE, BROWN, 0, 0, 1, 440);
     if (sSection == SEC_KEYBOARD || sSection == SEC_CONTROLLER) {
-        draw_text("Slot 1", slot_x(0), 124, 24, ALIGN_CENTRE, 0xFF8A7458u, 0, 0, 0, 0);
-        draw_text("Slot 2", slot_x(1), 124, 24, ALIGN_CENTRE, 0xFF8A7458u, 0, 0, 0, 0);
+        draw_text("Slot 1", slot_x(0), 124, 24, ALIGN_CENTRE, 0xFF8A7458u, 0, 0, 0, 116);
+        draw_text("Slot 2", slot_x(1), 124, 24, ALIGN_CENTRE, 0xFF8A7458u, 0, 0, 0, 116);
     }
     for (i = sTop; i < n && i < sTop + VISIBLE_ROWS; i++) {
         Row r = row_at(sSection, i);
@@ -779,12 +791,21 @@ static void draw_book(void) {
     if (sOnRows && row_at(sSection, sRow).kind == ROW_SETTING && row_at(sSection, sRow).which == SET_UPDATES &&
         update_state() == UPDATE_NEWER) {
         draw_text("Select: open its download page", (kPage.x0 + kPage.x1) / 2, 752, 28, ALIGN_CENTRE, 0xFF7A6448u, 0,
-                  0, 0, 0);
+                  0, 0, kPage.x1 - kPage.x0 - 40);
+    }
+    if (sOnRows && row_at(sSection, sRow).kind == ROW_SETTING &&
+        ((row_at(sSection, sRow).which == SET_LANGUAGE && !pack_has(g_settings.language, "text")) ||
+         (row_at(sSection, sRow).which == SET_CRIES && !pack_has(g_settings.cries, "cries")))) {
+        /* Once asked for, how the making goes (the pack's own row is below). */
+        char how[300];
+        if (langpack_state(NULL, NULL) == LANGPACK_IDLE) snprintf(how, sizeof(how), "%s", "Select: make its pack from a disc");
+        else langpack_text(how, sizeof(how));
+        draw_text(how, (kPage.x0 + kPage.x1) / 2, 752, 28, ALIGN_CENTRE, 0xFF7A6448u, 0, 0, 0, kPage.x1 - kPage.x0 - 40);
     }
     if (sOnRows && row_at(sSection, sRow).kind == ROW_BINDING) {
         draw_text(sCapture != CAPTURE_NONE ? "Esc: cancel" : input_controller_last() ? "Select: rebind    Y: clear"
                                                                                    : "Select: rebind    Delete: clear",
-                  (kPage.x0 + kPage.x1) / 2, 752, 28, ALIGN_CENTRE, 0xFF7A6448u, 0, 0, 0, 0);
+                  (kPage.x0 + kPage.x1) / 2, 752, 28, ALIGN_CENTRE, 0xFF7A6448u, 0, 0, 0, kPage.x1 - kPage.x0 - 40);
     }
 }
 

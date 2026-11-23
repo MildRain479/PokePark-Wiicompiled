@@ -34,6 +34,7 @@
 
 #include "host_settings.h"
 #include "langpack.h"
+#include "translate.h"
 
 /* ------------------------------------------------------------------------ */
 /* Bytes */
@@ -689,9 +690,34 @@ typedef struct {
     int messages, pictures, fonts;
 } Counts;
 
+/* The European disc (R8AP01) has each language in archives of its own,
+ * <name>_Fr.dac beside <name>.dac (English), nested ones too
+ * (Field/Ar02Zn01Dat_Fr.dac holds Temporary/Field/ParkAr02Zn01Dat_Fr.dan),
+ * with the USA's inner paths and font. A language's ending, or NULL for a
+ * disc of one language (the Japanese). */
+static const char* pal_suffix(int lang) {
+    switch (lang) {
+    case LANGUAGE_FR: return "_Fr";
+    case LANGUAGE_DE: return "_Ge";
+    case LANGUAGE_IT: return "_It";
+    case LANGUAGE_ES: return "_Sp";
+    default: return NULL;
+    }
+}
+
+/* path with sfx before its extension, into out (n bytes). */
+static void with_suffix(const char* path, const char* sfx, char* out, size_t n) {
+    const char* dot = strrchr(path, '.');
+    const char* slash = strrchr(path, '/');
+    if (!dot || (slash && dot < slash)) dot = path + strlen(path);
+    snprintf(out, n, "%.*s%s%s", (int)(dot - path), path, sfx, dot);
+}
+
 /* usa (an uncompressed archive) with its text and pictures from other,
- * into out; 0 if nothing in it changed. */
-static int swap(const uint8_t* usa, size_t un, const uint8_t* other, size_t on, Counts* c, Buf* out, int depth) {
+ * into out; 0 if nothing in it changed. sfx: the European disc's language
+ * ending (pal_suffix), on its nested archives' names. */
+static int swap(const uint8_t* usa, size_t un, const uint8_t* other, size_t on, Counts* c, Buf* out, int depth,
+                const char* sfx) {
     int nu = 0, no = 0, i, k, changed = 0;
     U8File* fu = u8_files(usa, un, &nu);
     U8File* fo = other ? u8_files(other, on, &no) : NULL;
@@ -704,20 +730,22 @@ static int swap(const uint8_t* usa, size_t un, const uint8_t* other, size_t on, 
         size_t tn = 0;
         const char* p = fu[i].path;
         size_t pl = strlen(p);
+        char named[600] = "";
+        if (sfx) with_suffix(p, sfx, named, sizeof(named));
         for (k = 0; fo && k < no; k++) {
-            if (!strcmp(fo[k].path, p)) {
+            if (!strcmp(fo[k].path, p) || (sfx && !strcmp(fo[k].path, named))) {
                 theirs = other + fo[k].off;
                 tn = fo[k].size;
                 break;
             }
         }
         if (is_u8(body, bn) && theirs && is_u8(theirs, tn)) {
-            if (swap(body, bn, theirs, tn, c, &rep[i], depth + 1)) changed = 1;
+            if (swap(body, bn, theirs, tn, c, &rep[i], depth + 1, sfx)) changed = 1;
         } else if (bn && body[0] == 0x11 && theirs && tn && theirs[0] == 0x11 && pl > 4 &&
                    (!strcmp(p + pl - 4, ".dan") || !strcmp(p + pl - 4, ".dac") || !strcmp(p + pl - 4, ".arc"))) {
             Buf a = {0}, b = {0}, got = {0};
             if (lz11_decompress(body, bn, &a) && is_u8(a.p, a.n) && lz11_decompress(theirs, tn, &b) &&
-                swap(a.p, a.n, b.p, b.n, c, &got, depth + 1)) {
+                swap(a.p, a.n, b.p, b.n, c, &got, depth + 1, sfx)) {
                 if (lz11_compress(got.p, got.n, &rep[i])) changed = 1;
                 else free(rep[i].p), memset(&rep[i], 0, sizeof(Buf));
             }
@@ -728,8 +756,13 @@ static int swap(const uint8_t* usa, size_t un, const uint8_t* other, size_t on, 
             const char* name = p + 8;
             const uint8_t* mine = NULL;
             size_t mn = 0;
+            /* The European staff rolls are in English, with Europe's
+             * localization staff in place of America's: the USA's stays. */
+            if (sfx && !strcmp(name, "StaffRoll.bmg")) continue;
+            /* The European disc: the same path (theirs). */
+            if (sfx) mine = theirs, mn = tn;
             /* Message/<language>/<name>.bmg, any letter case. */
-            for (k = 0; fo && k < no; k++) {
+            for (k = 0; !sfx && fo && k < no; k++) {
                 const char* q = fo[k].path;
                 const char* s1 = strchr(q, '/');
                 const char* s2 = s1 ? strchr(s1 + 1, '/') : NULL;
@@ -926,9 +959,26 @@ void langdisc_free(LangDisc* d) {
     memset(d, 0, sizeof(*d));
 }
 
+/* The languages a disc's packs are (LANGUAGE_*), into out (4 at most);
+ * how many. */
+static int languages_of(const char* id, int* out) {
+    if (!strncmp(id, "R8AJ01", 6)) {
+        out[0] = LANGUAGE_JP;
+        return 1;
+    }
+    if (!strncmp(id, "R8AP01", 6)) {
+        out[0] = LANGUAGE_FR;
+        out[1] = LANGUAGE_DE;
+        out[2] = LANGUAGE_IT;
+        out[3] = LANGUAGE_ES;
+        return 4;
+    }
+    return 0;
+}
+
 int langpack_language_of(const char* id) {
-    if (!strncmp(id, "R8AJ01", 6)) return LANGUAGE_JP;
-    return -1;
+    int l[4];
+    return languages_of(id, l) ? l[0] : -1;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1066,14 +1116,15 @@ int langpack_state(int* percent, const char** message) {
     return sState;
 }
 
+/* Its messages are in the language the game's text is in (translate.h). */
 void langpack_fail(const char* message) {
-    snprintf(sMessage, sizeof(sMessage), "%s", message);
+    snprintf(sMessage, sizeof(sMessage), "%s", tr(message));
     sState = LANGPACK_FAILED;
     fprintf(stderr, "language pack: %s\n", message);
 }
 
 void langpack_set_running(const char* message) {
-    snprintf(sMessage, sizeof(sMessage), "%s", message);
+    snprintf(sMessage, sizeof(sMessage), "%s", tr(message));
     sPercent = 0;
     sState = LANGPACK_RUNNING;
 }
@@ -1083,14 +1134,23 @@ static int ends_with(const char* s, const char* e) {
     return a >= b && !strcmp(s + a - b, e);
 }
 
+/* One of several packs from one disc: which and of how many (for the
+ * message). */
+static int sOf, sOfN;
+
 void langpack_run(int lang, const LangDisc* usa, const LangDisc* other) {
-    char out[1100], path[1500];
+    char out[1100], path[1500], theirs[600];
     int nu = 0, no = 0, i, total = 0, at = 0, archives = 0, cries = 0;
     FstFile* fu = fst_files(usa, &nu);
     FstFile* fo = fst_files(other, &no);
     Counts c = {0, 0, 0};
     const FstFile *bu, *bo;
-    snprintf(sMessage, sizeof(sMessage), "Making the %s pack", settings_language_name(lang));
+    const char* sfx = pal_suffix(lang);
+    if (sOfN > 1)
+        snprintf(sMessage, sizeof(sMessage), tr("Making the %s pack (%d of %d)"), tr(settings_language_name(lang)), sOf,
+                 sOfN);
+    else
+        snprintf(sMessage, sizeof(sMessage), tr("Making the %s pack"), tr(settings_language_name(lang)));
     sPercent = 0;
     sState = LANGPACK_RUNNING;
     if (!fu || !fo) {
@@ -1108,7 +1168,8 @@ void langpack_run(int lang, const LangDisc* usa, const LangDisc* other) {
         int compressed;
         if (!(ends_with(f->path, ".dac") || ends_with(f->path, ".dan") || ends_with(f->path, ".arc"))) continue;
         sPercent = 90 * ++at / (total ? total : 1);
-        if (!(o = find_file(fo, no, f->path))) continue;
+        if (sfx) with_suffix(f->path, sfx, theirs, sizeof(theirs));
+        if (!(o = find_file(fo, no, sfx ? theirs : f->path))) continue;
         if (!read_whole(usa, f, &raw) || !read_whole(other, o, &oraw)) {
             free(raw.p);
             free(oraw.p);
@@ -1120,7 +1181,7 @@ void langpack_run(int lang, const LangDisc* usa, const LangDisc* other) {
         if (oraw.n && oraw.p[0] == 0x11 ? !lz11_decompress(oraw.p, oraw.n, &b) : !buf_add(&b, oraw.p, oraw.n))
             goto next;
         if (!is_u8(a.p, a.n) || !is_u8(b.p, b.n)) goto next;
-        if (!swap(a.p, a.n, b.p, b.n, &c, &got, 0)) goto next;
+        if (!swap(a.p, a.n, b.p, b.n, &c, &got, 0, sfx)) goto next;
         if (compressed && !lz11_compress(got.p, got.n, &packed)) goto next;
         snprintf(path, sizeof(path), "%s/text/files/%s", out, f->path);
         if (!write_file(path, compressed ? packed.p : got.p, compressed ? packed.n : got.n)) {
@@ -1136,9 +1197,12 @@ void langpack_run(int lang, const LangDisc* usa, const LangDisc* other) {
         free(got.p);
         free(packed.p);
     }
-    /* The cries: the whole sound archive, if its tables match. */
+    /* The cries: the whole sound archive, if its tables match (on the
+     * European disc French and German have their own, Delhi_Fr.brsar;
+     * Italian and Spanish the English one). */
     bu = find_file(fu, nu, "Sound/Delhi.brsar");
-    bo = find_file(fo, no, "Sound/Delhi.brsar");
+    with_suffix("Sound/Delhi.brsar", sfx ? sfx : "", theirs, sizeof(theirs));
+    bo = find_file(fo, no, theirs);
     if (bu && bo) {
         uint32_t tu[5], to[5];
         if (brsar_tables(usa, bu, tu) && brsar_tables(other, bo, to) && !memcmp(tu, to, sizeof(tu))) {
@@ -1160,13 +1224,31 @@ void langpack_run(int lang, const LangDisc* usa, const LangDisc* other) {
             c.pictures, c.fonts, cries ? ", cries" : "", out);
     /* In use, the pack the game started with stays until it starts again. */
     if (g_language_started != lang && g_cries_started != lang) langpack_promote(lang);
-    snprintf(sMessage, sizeof(sMessage), "%s ready%s", settings_language_name(lang),
-             g_language_started == lang || g_cries_started == lang ? ": restart" : "");
+    snprintf(sMessage, sizeof(sMessage), tr("%s ready%s"), tr(settings_language_name(lang)),
+             g_language_started == lang || g_cries_started == lang ? tr(": restart") : "");
     sPercent = 100;
     sState = LANGPACK_DONE;
 end:
     free(fu);
     free(fo);
+}
+
+int langpack_run_disc(const char* id, const LangDisc* usa, const LangDisc* other) {
+    int langs[4], n = languages_of(id, langs), i, restart = 0;
+    char done[256] = "";
+    for (i = 0; i < n; i++) {
+        sOf = i + 1;
+        sOfN = n;
+        langpack_run(langs[i], usa, other);
+        if (sState != LANGPACK_DONE) break;
+        if (g_language_started == langs[i] || g_cries_started == langs[i]) restart = 1;
+        snprintf(done + strlen(done), sizeof(done) - strlen(done), "%s%s", i ? tr(i == n - 1 ? " and " : ", ") : "",
+                 tr(settings_language_name(langs[i])));
+    }
+    sOf = sOfN = 0;
+    if (n > 1 && sState == LANGPACK_DONE)
+        snprintf(sMessage, sizeof(sMessage), tr("%s ready%s"), done, restart ? tr(": restart") : "");
+    return n;
 }
 
 void langpack_promote(int lang) {

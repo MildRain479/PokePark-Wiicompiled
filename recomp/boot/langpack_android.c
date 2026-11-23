@@ -17,6 +17,7 @@
 
 #include "host_settings.h"
 #include "langpack.h"
+#include "translate.h"
 #include "nod.h"
 
 extern struct android_app* g_android_app; /* window_android.c */
@@ -146,15 +147,15 @@ static void work(void* arg) {
     LangDisc usa, other;
     Image *theirs, *ours = NULL;
     char id[7] = "", our_id[7];
-    int lang, fd;
+    int fd;
     (void)arg;
     if (!(theirs = image_open(sFd, &other, id))) {
         langpack_fail("That disc image couldn't be read. Is the file complete?");
         return;
     }
-    if ((lang = langpack_language_of(id)) < 0) {
+    if (langpack_language_of(id) < 0) {
         char m[160];
-        snprintf(m, sizeof(m), "%s is not a Japanese disc (R8AJ01)", id);
+        snprintf(m, sizeof(m), tr(LANGPACK_WHICH_DISCS), id);
         langpack_fail(m);
         image_close(theirs);
         return;
@@ -172,7 +173,7 @@ static void work(void* arg) {
         image_close(theirs);
         return;
     }
-    langpack_run(lang, &usa, &other);
+    langpack_run_disc(id, &usa, &other);
     if (ours) image_close(ours);
     else langdisc_free(&usa);
     image_close(theirs);

@@ -298,7 +298,24 @@ static void button_name(uint32_t button, char* out, int n) {
     settings_binding_name(a, input_controller_last(), out, (size_t)n);
 }
 
+static int motion_text(int* handheld) {
+#ifdef __ANDROID__
+    *handheld = 1;
+#else
+    *handheld = 0;
+#endif
+    if (!input_has_gyro()) return 0;
+    return (g_settings.gyro_aim ? HOST_MOTION_AIM : 0) | (g_settings.gyro_steer ? HOST_MOTION_STEER : 0);
+}
+
+/* The two must agree. */
+typedef char kTextLanguages[HOST_TEXTS == LANGUAGES && HOST_TEXT_ES == LANGUAGE_ES ? 1 : -1];
+
+static int text_language(void) { return g_language_started; }
+
 void prompts_init(void) {
+    g_host_motion_text = motion_text;
+    g_host_text_language = text_language;
     g_host_prompt_icon = prompt_icon;
     g_host_prompt_generation = prompt_generation;
     g_host_button_name = button_name;

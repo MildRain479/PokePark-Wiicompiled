@@ -11,8 +11,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "translate.h"
+
 int hle_font_metrics(int* cellW, int* cellH, int* baseline); /* hle_prompts.c */
 int hle_font_glyph(uint16_t code, uint8_t* cov, int* left, int* advance);
+
+/* The next character of text: UTF-8, or, a byte that doesn't begin a
+ * sequence of it, Latin-1 ("PokéPark"). */
+static uint16_t text_char(const char** s) {
+    const uint8_t* p = (const uint8_t*)*s;
+    uint32_t c = p[0];
+    if (c >= 0xE0 && c < 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+        *s += 3;
+        return (uint16_t)((c & 15) << 12 | (p[1] & 63u) << 6 | (p[2] & 63u));
+    }
+    if (c >= 0xC2 && c < 0xE0 && (p[1] & 0xC0) == 0x80) {
+        *s += 2;
+        return (uint16_t)((c & 31) << 6 | (p[1] & 63u));
+    }
+    *s += 1;
+    return (uint16_t)c;
+}
 
 typedef struct {
     float x0, y0, x1, y1;
@@ -116,12 +135,15 @@ static void draw_triangle(float cx, float cy, float size, int dir, uint32_t c) {
 /* Text, in the game's font: size is its cell height in picture units. */
 static int sCellW, sCellH, sBaseline;
 
+/* Text is drawn, and measured, in the language the game's text is in
+ * (translate.h), where it has a translation. */
 static float text_width(const char* s, float size) {
     static uint8_t cov[64 * 64];
     float w = 0;
     int left, advance;
-    for (; *s; s++) {
-        if (hle_font_glyph((uint8_t)*s, cov, &left, &advance)) w += advance;
+    if (sCellW * sCellH > (int)sizeof(cov)) return 0;
+    for (s = tr(s); *s;) {
+        if (hle_font_glyph(text_char(&s), cov, &left, &advance)) w += advance;
     }
     return w * size / sCellH;
 }
@@ -183,6 +205,8 @@ static void draw_text(const char* s, float x, float y, float size, int align, ui
     static int maskSize;
     float width = text_width(s, size), k, pen;
     int bx0, by0, bw, bh, i, j, pad;
+    if (sCellW * sCellH > (int)sizeof(cov)) return;
+    s = tr(s);
     if (maxWidth > 0 && width > maxWidth) {
         size *= maxWidth / width;
         width = maxWidth;
@@ -205,9 +229,9 @@ static void draw_text(const char* s, float x, float y, float size, int align, ui
     }
     memset(mask, 0, (size_t)bw * bh * sizeof(float));
     /* The glyphs' coverage, scaled. */
-    for (pen = x; *s; s++) {
+    for (pen = x; *s;) {
         int left, advance, gx0, gy0, gx1, gy1;
-        if (!hle_font_glyph((uint8_t)*s, cov, &left, &advance)) continue;
+        if (!hle_font_glyph(text_char(&s), cov, &left, &advance)) continue;
         gx0 = (int)X(pen + left * k) - bx0;
         gy0 = (int)Y(y - size / 2) - by0;
         gx1 = gx0 + (int)(sCellW * k * sScale) + 1;

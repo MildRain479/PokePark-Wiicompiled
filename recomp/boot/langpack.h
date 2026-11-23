@@ -24,7 +24,8 @@ int langdisc_folder(LangDisc* d, const char* root);
 void langdisc_free(LangDisc* d);
 
 /* The disc's ID (6 characters) and what language that disc's pack is
- * (LANGUAGE_*), or -1 if none this knows. */
+ * (LANGUAGE_*; the first of the European disc's four), or -1 if none
+ * this knows. */
 int langpack_language_of(const char* id);
 
 enum { LANGPACK_IDLE, LANGPACK_RUNNING, LANGPACK_DONE, LANGPACK_FAILED };
@@ -36,6 +37,14 @@ int langpack_state(int* percent, const char** message);
 /* Makes the pack for lang from other beside usa (on the calling thread:
  * the state says how it goes). */
 void langpack_run(int lang, const LangDisc* usa, const LangDisc* other);
+
+/* Every pack the disc of that ID makes (the Japanese one, or French,
+ * German, Italian and Spanish from the European one), one after another;
+ * how many it has. */
+int langpack_run_disc(const char* id, const LangDisc* usa, const LangDisc* other);
+
+/* What's said of a disc that has no pack. */
+#define LANGPACK_WHICH_DISCS "%s is not a Japanese (R8AJ01) or European (R8AP01) disc" /* the disc's ID */
 
 /* Runs fn(arg) on a thread of its own, below the game's priority; 0 if it
  * started. */

@@ -194,8 +194,9 @@ which writes a `data.bin` to copy to the SD card.
 - **Gyro controls**, for a DualSense, DualShock 4, Switch controller or
   a handheld's own sensors: aim the minigames' pointer by turning the
   controller, and steer the flying, swimming, sliding and rolling
-  minigames by tilting it. Both are off until turned on in Options >
-  Controller.
+  minigames by tilting it (all but Rayquaza's, which is steered with the
+  stick). The minigames' instructions then say what to tilt or turn.
+  Both are off until turned on in Options > Controller.
 - A **Nintendo layout** setting, swapping A with B and X with Y.
 - Camera speed (mouse and right stick apart), inverted camera up/down
   and left/right, and the sticks' dead zone.
@@ -225,13 +226,24 @@ Optional changes to the game's balance, all off (100%) by default:
   on them (the title screen's buttons, the button bar) and the staff
   roll come from the Japanese disc too; the PokéPark Wii logo and the
   English localization's credits stay.
+- **French, German, Italian and Spanish text**, from your own European
+  disc (R8AP01), the same way: one disc image makes all four packs, one
+  after another. French and German have their own cries too. The menus'
+  pictures with words on them come from that disc; the staff roll stays
+  the USA one (Europe's is in English too).
+- In every language, the minigames' instructions say which keys, sticks
+  or buttons to use (or what to tilt and turn, with gyro controls on)
+  instead of how to move the Wii Remote.
 
-  On a PC, `tools/recomp/langpack.py` builds the same pack from the two
+  On a PC, `tools/recomp/langpack.py` builds the same packs from the two
   extracted discs:
 
   ```
   python tools/recomp/langpack.py R8AE01/disc/files <Japanese disc>/files languages/Japanese
+  python tools/recomp/langpack.py R8AE01/disc/files <European disc>/files languages/French --pal=Fr
   ```
+
+  (`--pal=Ge` makes German, `--pal=It` Italian and `--pal=Sp` Spanish.)
 - **Volumes.** Options > Audio sets the music, the sound effects and
   the cries apart, from 0% to 100%.
 

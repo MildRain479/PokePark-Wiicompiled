@@ -23,11 +23,17 @@
 #define MOTION_STALE 0.25    /* seconds without readings: none */
 #define MOTION_WANTED 1.0    /* seconds the sensors stay on after the game last asked */
 #define MOTION_STILL 0.03f   /* rad/s: slower turning is taken as none (the gyro's drift) */
-#define MOTION_SETTLE 0.06f  /* seconds: how quickly the way up follows the accelerometer */
+/* Seconds: how quickly the way up follows the accelerometer. With a gyro
+ * the way up turns with it and only slowly goes by the accelerometer, which
+ * also feels every push (a car's turns and bumps, a hand's shake); without
+ * one, quickly. */
+#define MOTION_SETTLE 0.06f
+#define MOTION_SETTLE_GYRO 0.5f
 
 static struct {
     float up[3];               /* the way up, in the controller's axes (unit) */
     int haveUp;
+    double lastGyro;           /* when the last gyro reading came */
     float yaw, pitch;          /* turning since the pointer was last read, right and up */
     double lastReading;        /* when the last gyro or accelerometer reading came */
     double aimAsked, steerAsked; /* when the game last asked */
@@ -44,14 +50,16 @@ static int motion_wanted(double now) {
 static void motion_off(void) {
     sMotion.haveUp = 0;
     sMotion.yaw = sMotion.pitch = 0;
-    sMotion.lastReading = 0;
+    sMotion.lastReading = sMotion.lastGyro = 0;
 }
 
 static void motion_accel(const float a[3], float dt, double now) {
     float len = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]), k;
     int i;
     if (len <= 0) return;
-    k = sMotion.haveUp ? 1.0f - expf(-(dt > 0 ? dt : 0) / MOTION_SETTLE) : 1.0f;
+    k = sMotion.haveUp ? 1.0f - expf(-(dt > 0 ? dt : 0) /
+                                     (now - sMotion.lastGyro < MOTION_STALE ? MOTION_SETTLE_GYRO : MOTION_SETTLE))
+                       : 1.0f;
     for (i = 0; i < 3; i++) sMotion.up[i] += (a[i] / len - sMotion.up[i]) * k;
     len = sqrtf(sMotion.up[0] * sMotion.up[0] + sMotion.up[1] * sMotion.up[1] + sMotion.up[2] * sMotion.up[2]);
     if (len > 0)
@@ -61,8 +69,18 @@ static void motion_accel(const float a[3], float dt, double now) {
 }
 
 static void motion_gyro(const float g[3], float dt, double now) {
-    float yaw, pitch;
+    float yaw, pitch, u[3], len;
+    int i;
     if (!sMotion.haveUp || dt <= 0 || dt > 0.1f) return;
+    /* The way up stays put as the controller turns: in its axes it turns
+     * the other way (u' = u x g). */
+    u[0] = sMotion.up[0] + (sMotion.up[1] * g[2] - sMotion.up[2] * g[1]) * dt;
+    u[1] = sMotion.up[1] + (sMotion.up[2] * g[0] - sMotion.up[0] * g[2]) * dt;
+    u[2] = sMotion.up[2] + (sMotion.up[0] * g[1] - sMotion.up[1] * g[0]) * dt;
+    len = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    if (len > 0)
+        for (i = 0; i < 3; i++) sMotion.up[i] = u[i] / len;
+    sMotion.lastGyro = now;
     /* Left about the way up is positive (the right hand), so right is the other way. */
     yaw = -(g[0] * sMotion.up[0] + g[1] * sMotion.up[1] + g[2] * sMotion.up[2]);
     /* About x: the face turns toward the player, the far edge up. */

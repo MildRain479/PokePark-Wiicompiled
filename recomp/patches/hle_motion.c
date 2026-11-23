@@ -32,7 +32,9 @@
  * boot/motion.h), the settings can have turning it move the pointer too
  * (gyro aiming), and tilting it steer, like a wheel, and climb and dive
  * (gyro steering: tilted back climbs, from how it was held as the
- * minigame began); the keys and sticks still go first.
+ * minigame began); the keys and sticks still go first. Rayquaza's game
+ * isn't steered by tilt: its course turns too sharply for it, and the
+ * controller is turned to aim at the end.
  *
  * The d-pad still goes to the game as well. RECOMP_TILT_FLIP=lr, fb or
  * lrfb turns tilting the other way, and RECOMP_POINTER_FLIP=y moves the
@@ -56,13 +58,17 @@ int (*g_host_tilt_read)(float* roll, float* pitch);
 #define PI 3.14159265f
 
 enum { HOLD_SIDEWAYS, HOLD_UPRIGHT };
-enum { USE_SHAKE = 1, USE_STEER = 2, USE_PITCH = 4, USE_SWING = 8, USE_PUSH = 16, USE_BAT = 32, USE_POINTER = 64, USE_PITCH_ROLL = 128 };
+enum {
+    USE_SHAKE = 1, USE_STEER = 2, USE_PITCH = 4, USE_SWING = 8, USE_PUSH = 16, USE_BAT = 32, USE_POINTER = 64,
+    USE_PITCH_ROLL = 128,
+    USE_NO_TILT = 256 /* steered by the keys and sticks alone, not gyro steering */
+};
 
 static const struct {
     int at, hold, use;
 } kMinigames[] = {
     {1, HOLD_SIDEWAYS, USE_SHAKE},                          /* Absol's Hurdle Bounce */
-    {2, HOLD_SIDEWAYS, USE_STEER | USE_PITCH | USE_POINTER}, /* Rayquaza's Balloon Panic */
+    {2, HOLD_SIDEWAYS, USE_STEER | USE_PITCH | USE_POINTER | USE_NO_TILT}, /* Rayquaza's Balloon Panic */
     {3, HOLD_UPRIGHT, USE_SWING | USE_PUSH},                /* Venusaur's Vine Swing */
     {4, HOLD_UPRIGHT, USE_SWING | USE_PUSH},                /* Tangrowth's Swing-Along */
     {5, HOLD_SIDEWAYS, USE_SHAKE},                          /* Dusknoir's Speed Slam */
@@ -89,9 +95,11 @@ static const struct {
  * as fast at 50 degrees as at 70, and at 30 too slowly. */
 #define MAX_PITCH (50.0f * PI / 180.0f)
 #define EASE 0.15f
-/* Gyro steering: the tilt that steers or climbs all the way. */
+/* Gyro steering: the tilt (from how it was held as the minigame began)
+ * that steers or climbs all the way. */
 #define TILT_STEER_FULL (30.0f * PI / 180.0f)
 #define TILT_PITCH_FULL (25.0f * PI / 180.0f)
+#define TILT_SETTLE_REPORTS 100 /* half a second */
 
 /* The pointer: how far a pixel of mouse movement and a second of full
  * stick move it (the screen is -1 to 1 across), and where its dots sit in
@@ -110,6 +118,13 @@ static const struct {
  * cursor stays at the edge). Much past 1.6 the game loses the pointer
  * (1.8 hid it and stopped the turning). */
 #define POINTER_X_LIMIT 1.6f
+/* Where a game that doesn't turn its view keeps it (Rayquaza's: past the
+ * screen's sides its pointer is gone), and the screen's top and bottom
+ * (KPAD's 1 is 226/182 of the way). Turning the controller while steering
+ * by tilt moved the hidden pointer as far as it went, off the screen by
+ * the time it was wanted. */
+#define POINTER_X_SCREEN 1.0f
+#define POINTER_Y_LIMIT (182.0f / 226.0f)
 
 static int flip(const char* env, const char* what) {
     const char* e = getenv(env);
@@ -175,9 +190,11 @@ int hle_motion(uint32_t held, uint32_t report, int16_t acc[3], int16_t dots[4][2
     static float steer, pitch, px, py;
     static Gesture push, bat;
     static KeyPair leftRight, upDown;
-    static float level;            /* gyro steering: the tilt taken as level */
+    static float level, levelRoll; /* gyro steering: the tilt taken as level */
     static int levelAt;            /* the minigame it was taken in */
     static uint32_t lastTilt;      /* the report it was last read at */
+    static uint32_t tiltFrom;      /* the report it came at (after none) */
+    static int pointerAt;          /* the minigame the pointer was centred for */
     int at = hle_minigame(), i, use = -1, hold = HOLD_SIDEWAYS, swing, tilt = 0;
     float lx = 0, ly = 0, rx = 0, ry = 0, x, y, z, wantSteer = 0, wantPitch = 0, roll = 0, tiltPitch = 0;
     if (!at) return 0;
@@ -189,15 +206,29 @@ int hle_motion(uint32_t held, uint32_t report, int16_t acc[3], int16_t dots[4][2
     }
     if (use < 0) use = USE_SHAKE; /* not one we know: shaking, which is common */
     if (g_host_sticks_read) g_host_sticks_read(&lx, &ly, &rx, &ry);
-    if ((use & USE_STEER) && g_host_tilt_read && g_host_tilt_read(&roll, &tiltPitch)) {
+    if ((use & USE_STEER) && !(use & USE_NO_TILT) && g_host_tilt_read && g_host_tilt_read(&roll, &tiltPitch)) {
         /* Level as it was held when the minigame began (or the tilt
          * came back after a second without it). */
         if (levelAt != at || report - lastTilt > 200) {
             levelAt = at;
-            level = tiltPitch;
+            tiltFrom = report;
         }
         lastTilt = report;
-        tilt = 1;
+        /* Level is how it is held once the sensors have settled (half a
+         * second: their first readings can be far off); no steering by
+         * tilt until then. */
+        if (report - tiltFrom <= TILT_SETTLE_REPORTS) {
+            level = tiltPitch;
+            levelRoll = roll;
+            if (report - tiltFrom == TILT_SETTLE_REPORTS)
+                fprintf(stderr, "motion: level taken: roll %.1f, pitch %.1f degrees\n", roll * 180 / PI,
+                        tiltPitch * 180 / PI);
+        } else {
+            /* Steering from level too: held a little to one side, it
+             * doesn't keep turning that way. */
+            roll -= levelRoll;
+            tilt = 1;
+        }
     }
 
     /* Tilt, toward where the keys or the stick put it. */
@@ -304,6 +335,11 @@ int hle_motion(uint32_t held, uint32_t report, int16_t acc[3], int16_t dots[4][2
             rx = back ? -ex : ex;
             ry = back ? -ey : ey;
         }
+        if (pointerAt != at) {
+            /* In the middle as each minigame begins. */
+            pointerAt = at;
+            px = py = 0;
+        }
         if (g_host_pointer_read) g_host_pointer_read(&dx, &dy);
         {
             float gyaw, gpitch;
@@ -314,8 +350,13 @@ int hle_motion(uint32_t held, uint32_t report, int16_t acc[3], int16_t dots[4][2
         }
         px += dx * POINTER_PER_PIXEL + rx * fabsf(rx) * POINTER_PER_STICK_SECOND / 200.0f;
         py += -dy * POINTER_PER_PIXEL + ry * fabsf(ry) * POINTER_PER_STICK_SECOND / 200.0f;
-        px = px > POINTER_X_LIMIT ? POINTER_X_LIMIT : px < -POINTER_X_LIMIT ? -POINTER_X_LIMIT : px;
-        py = py > 1 ? 1 : py < -1 ? -1 : py;
+        {
+            /* Rotom's game turns its view past the sides; one that is
+             * steered too (Rayquaza's) doesn't. */
+            float xl = (use & USE_STEER) ? POINTER_X_SCREEN : POINTER_X_LIMIT;
+            px = px > xl ? xl : px < -xl ? -xl : px;
+            py = py > POINTER_Y_LIMIT ? POINTER_Y_LIMIT : py < -POINTER_Y_LIMIT ? -POINTER_Y_LIMIT : py;
+        }
     }
     {
         float yUp = flip("RECOMP_POINTER_FLIP", "y") ? -py : py;
