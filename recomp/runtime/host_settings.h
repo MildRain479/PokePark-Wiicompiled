@@ -200,6 +200,9 @@ const uint32_t* menu_draw(int w, int h);
 /* Android: changes whenever menu_draw's image may have, so a device can
  * leave an unchanged one where it is (input_android.c). */
 unsigned menu_generation(void);
+/* Android: 1 if menu_draw's image last changed (one generation) by part r
+ * (x, y, w, h) alone, so a device can copy just that. */
+int menu_changed_part(int* r);
 /* A second screen (friends.c) as the PokéPark Pad's pages, w x h, with the
  * friends list: NULL if there is none yet; changed[0] 1 if it isn't the
  * image last given, 2 if only its part changed[1..4] (x, y, w, h) is; map

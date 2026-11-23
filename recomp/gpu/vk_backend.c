@@ -3534,10 +3534,14 @@ static int vk_present(int x, int y, int cw, int ch, int may_drop) {
             /* Uploaded only when it changed: a phone's screen is a lot to
              * copy every frame. */
             static unsigned uploaded = ~0u;
-            int same = menu_generation() == uploaded && m->im.w == gw && m->im.h == gh;
+            int part[4], sized = m->im.w == gw && m->im.h == gh;
+            int same = menu_generation() == uploaded && sized;
+            /* One step on from what's uploaded, by a part: that part alone
+             * (the touch controls' held buttons and stick). */
+            int partOnly = sized && menu_generation() == uploaded + 1 && menu_changed_part(part);
             uploaded = menu_generation();
 #else
-            int same = 0;
+            int same = 0, partOnly = 0, part[4];
 #endif
             if (m->im.w != gw || m->im.h != gh) {
                 drop_image(&m->im);
@@ -3546,7 +3550,8 @@ static int vk_present(int x, int y, int cw, int ch, int may_drop) {
                 m->sampler = sLinearClamp;
                 set_texture(TEX_MENU);
             }
-            if (!same) upload(S->up, m, gw, gh, 1, (const uint8_t*)menu);
+            if (partOnly) upload_part(S->up, m, gw, part, menu);
+            else if (!same) upload(S->up, m, gw, gh, 1, (const uint8_t*)menu);
         }
         /* The copied rectangle of the EFB (on the canvas), as large as
          * fits in the window at the shape it has on a TV, with black bars

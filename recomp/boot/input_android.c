@@ -23,6 +23,7 @@
 #include <android/keycodes.h>
 #include <android/looper.h>
 #include <android/sensor.h>
+#include <sys/system_properties.h>
 #include <android_native_app_glue.h>
 #include <jni.h>
 #include <math.h>
@@ -35,6 +36,7 @@
 #include "host_input.h"
 #include "host_settings.h"
 #include "motion.h"
+#include "translate.h"
 
 int hle_font_metrics(int* cellW, int* cellH, int* baseline); /* hle_prompts.c */
 int hle_font_glyph(uint16_t code, uint8_t* cov, int* left, int* advance);
@@ -720,6 +722,24 @@ static void device_to_pad(const float d[3], float out[3]) {
     out[2] = -sy;
 }
 
+/* Quarter turns from the display's axes to the sensors', for handhelds
+ * whose sensors sit turned from their screen. The AYN Thor's sit in its
+ * lower half, a quarter turn round: there, tilting it left and right
+ * read as tilting it forward and back (logged 2026-11-22), and steering by
+ * tilt stayed hard over to one side. */
+static int sensors_turn(void) {
+    static const struct {
+        const char* model;
+        int turn;
+    } kTurned[] = {{"AYN Thor", 1}};
+    char model[PROP_VALUE_MAX] = "";
+    int i;
+    __system_property_get("ro.product.model", model);
+    for (i = 0; i < (int)(sizeof(kTurned) / sizeof(kTurned[0])); i++)
+        if (!strcmp(model, kTurned[i].model)) return kTurned[i].turn;
+    return 0;
+}
+
 static void sensors_poll(void) {
     static int64_t lastAccel, lastGyro;
     double now = now_seconds();
@@ -734,7 +754,7 @@ static void sensors_poll(void) {
     }
     if (want != sSensorsOn && sSensorQueue) {
         if (want) {
-            sRotation = display_rotation();
+            sRotation = (display_rotation() + sensors_turn()) & 3;
             ASensorEventQueue_registerSensor(sSensorQueue, sAccel, 10000, 0);
             ASensorEventQueue_registerSensor(sSensorQueue, sGyro, 5000, 0);
             lastAccel = lastGyro = 0;
@@ -819,21 +839,40 @@ static void disc(float cx, float cy, float r, float ring, uint32_t c) {
     }
 }
 
-/* Text in the game's font, centred on (cx, cy), size pixels tall. */
-static void text(const char* s, float cx, float cy, float size, uint32_t c) {
+/* The next character of UTF-8 text (a byte that begins none: Latin-1). */
+static uint16_t text_char(const char** s) {
+    const uint8_t* p = (const uint8_t*)*s;
+    uint32_t c = p[0];
+    if (c >= 0xE0 && c < 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+        *s += 3;
+        return (uint16_t)((c & 15) << 12 | (p[1] & 63u) << 6 | (p[2] & 63u));
+    }
+    if (c >= 0xC2 && c < 0xE0 && (p[1] & 0xC0) == 0x80) {
+        *s += 2;
+        return (uint16_t)((c & 31) << 6 | (p[1] & 63u));
+    }
+    *s += 1;
+    return (uint16_t)c;
+}
+
+/* Text in the game's font and the game's language (translate.h), centred
+ * on (cx, cy), size pixels tall, and narrowed to at most maxWidth. */
+static void text(const char* s, float cx, float cy, float size, float maxWidth, uint32_t c) {
     static uint8_t cov[64 * 64];
     int cw, ch, base, left, advance, total = 0, x, y;
     const char* p;
     float k, pen;
     if (!hle_font_metrics(&cw, &ch, &base) || cw * ch > (int)sizeof(cov)) return;
+    s = tr(s);
     k = size / ch;
-    for (p = s; *p; p++) {
-        if (hle_font_glyph((uint8_t)*p, cov, &left, &advance)) total += advance;
+    for (p = s; *p;) {
+        if (hle_font_glyph(text_char(&p), cov, &left, &advance)) total += advance;
     }
+    if (total * k > maxWidth && total > 0) k = maxWidth / total;
     pen = cx - total * k / 2;
-    for (p = s; *p; p++) {
+    for (p = s; *p;) {
         int bx, by, gw = (int)(cw * k), gh = (int)(ch * k);
-        if (!hle_font_glyph((uint8_t)*p, cov, &left, &advance)) continue;
+        if (!hle_font_glyph(text_char(&p), cov, &left, &advance)) continue;
         bx = (int)(pen + left * k);
         by = (int)(cy - gh / 2.0f);
         for (y = 0; y < gh; y++) {
@@ -847,39 +886,134 @@ static void text(const char* s, float cx, float cy, float size, uint32_t c) {
     }
 }
 
-static void draw_controls(void) {
+/* The stick, at (sx, sy), and button b, held or not. Each stays inside
+ * its circle's box (control_box), and no two boxes overlap. */
+static void draw_stick_base(void) {
     float x, y, r;
-    int b;
     place(&kStick, sW, sH, &x, &y, &r);
     disc(x, y, r, 0, 0x40000000u);
     disc(x, y, r, r * 0.06f, 0x90FFFFFFu);
-    disc(x + sStickX * r * 0.6f, y - sStickY * r * 0.6f, r * 0.42f, 0, 0xA0FFFFFFu);
-    for (b = 0; b < BUTTONS; b++) {
-        int held = (sTouchHeld & kButtons[b].bit) != 0;
-        size_t len = strlen(kButtons[b].label);
-        place(&kButtons[b], sW, sH, &x, &y, &r);
-        disc(x, y, r, 0, held ? 0x90FFFFFFu : 0x50000000u);
-        disc(x, y, r, r * 0.08f, 0xA0FFFFFFu);
-        text(kButtons[b].label, x, y, len > 2 ? r * 0.55f : r * 1.1f, held ? 0xFF303030u : 0xFFFFFFFFu);
+}
+
+static void draw_knob(float sx, float sy) {
+    float x, y, r;
+    place(&kStick, sW, sH, &x, &y, &r);
+    disc(x + sx * r * 0.6f, y - sy * r * 0.6f, r * 0.42f, 0, 0xA0FFFFFFu);
+}
+
+static void draw_button(int b, int held) {
+    float x, y, r;
+    size_t len = strlen(kButtons[b].label);
+    place(&kButtons[b], sW, sH, &x, &y, &r);
+    disc(x, y, r, 0, held ? 0x90FFFFFFu : 0x50000000u);
+    disc(x, y, r, r * 0.08f, 0xA0FFFFFFu);
+    text(kButtons[b].label, x, y, len > 2 ? r * 0.55f : r * 1.1f, r * 1.7f, held ? 0xFF303030u : 0xFFFFFFFFu);
+}
+
+/* A control's box (x, y, w, h), on the screen. */
+static void control_box(const Control* c, int* box) {
+    float x, y, r;
+    int x0, y0, x1, y1;
+    place(c, sW, sH, &x, &y, &r);
+    x0 = (int)(x - r) - 2, y0 = (int)(y - r) - 2, x1 = (int)(x + r) + 3, y1 = (int)(y + r) + 3;
+    x0 = x0 < 0 ? 0 : x0, y0 = y0 < 0 ? 0 : y0, x1 = x1 > sW ? sW : x1, y1 = y1 > sH ? sH : y1;
+    box[0] = x0, box[1] = y0, box[2] = x1 > x0 ? x1 - x0 : 0, box[3] = y1 > y0 ? y1 - y0 : 0;
+}
+
+/* Box back to what's under the controls: the Options tab's picture, or
+ * nothing. */
+static void clear_box(const uint32_t* under, const int* box) {
+    int y;
+    for (y = box[1]; y < box[1] + box[3]; y++) {
+        uint32_t* d = sPx + (size_t)y * sW + box[0];
+        if (under) memcpy(d, under + (size_t)y * sW + box[0], (size_t)box[2] * 4);
+        else memset(d, 0, (size_t)box[2] * 4);
     }
 }
 
+/* The stick's box without its knob (what's under it, the base and the
+ * ring), kept from the last whole redraw: a move of the stick copies it
+ * back and draws just the knob, a fifth of the smoothed pixels. */
+static uint32_t* sStickBase;
+static int sStickBox[4];
+
+static void keep_stick_base(void) {
+    int y;
+    control_box(&kStick, sStickBox);
+    free(sStickBase);
+    sStickBase = (uint32_t*)malloc((size_t)sStickBox[2] * sStickBox[3] * 4 + 4);
+    if (!sStickBase) return;
+    for (y = 0; y < sStickBox[3]; y++)
+        memcpy(sStickBase + (size_t)y * sStickBox[2], sPx + (size_t)(sStickBox[1] + y) * sW + sStickBox[0],
+               (size_t)sStickBox[2] * 4);
+}
+
+/* The stick redrawn at (sx, sy), from its kept base. */
+static void redraw_stick(const uint32_t* under, float sx, float sy) {
+    int y;
+    if (!sStickBase) {
+        clear_box(under, sStickBox);
+        draw_stick_base();
+    } else {
+        for (y = 0; y < sStickBox[3]; y++)
+            memcpy(sPx + (size_t)(sStickBox[1] + y) * sW + sStickBox[0], sStickBase + (size_t)y * sStickBox[2],
+                   (size_t)sStickBox[2] * 4);
+    }
+    draw_knob(sx, sy);
+}
+
+static void grow(int* part, const int* box) {
+    int x1, y1;
+    if (!box[2] || !box[3]) return;
+    if (!part[2]) {
+        memcpy(part, box, 4 * sizeof(int));
+        return;
+    }
+    x1 = part[0] + part[2] > box[0] + box[2] ? part[0] + part[2] : box[0] + box[2];
+    y1 = part[1] + part[3] > box[1] + box[3] ? part[1] + part[3] : box[1] + box[3];
+    part[0] = part[0] < box[0] ? part[0] : box[0];
+    part[1] = part[1] < box[1] ? part[1] : box[1];
+    part[2] = x1 - part[0];
+    part[3] = y1 - part[1];
+}
+
+/* What menu_draw's image last changed by: only part sPart (x, y, w, h), if
+ * sPartOnly, for the device to copy just that. */
+static int sPart[4], sPartOnly;
+
+int menu_changed_part(int* r) {
+    if (!sPartOnly) return 0;
+    memcpy(r, sPart, sizeof(sPart));
+    return 1;
+}
+
 const uint32_t* menu_draw(int w, int h) {
-    static unsigned last;
+    static unsigned lastBase;
+    static uint32_t drawnHeld;
+    static int drawnX, drawnY, drawn;
     const uint32_t* opt = options_draw(w, h);
     int show = g_settings.touch_controls && !menu_is_open() && !input_controller_last();
-    unsigned key = 2166136261u;
-    /* What's on it: redrawn and uploaded again only when that changes. */
-    unsigned parts[8] = {(unsigned)show, opt ? options_draws() : ~0u, sTouchHeld, (unsigned)(sStickX * 8),
-                         (unsigned)(sStickY * 8), (unsigned)w, (unsigned)h, (unsigned)hle_font_metrics(&(int){0}, &(int){0}, &(int){0})};
-    int i;
-    for (i = 0; i < 8; i++) key = (key ^ parts[i]) * 16777619u;
+    unsigned base = 2166136261u;
+    /* What's under the controls, and where: all of it redrawn only when
+     * that changes. Held buttons and the stick (in eighths) redraw only
+     * their own boxes, which the device then copies alone: the whole of a
+     * phone's screen, drawn and uploaded on every move of the stick, made
+     * the frame rate stutter. */
+    unsigned parts[5] = {(unsigned)show, opt ? options_draws() : ~0u, (unsigned)w, (unsigned)h,
+                         (unsigned)hle_font_metrics(&(int){0}, &(int){0}, &(int){0})};
+    int i, sx = (int)(sStickX * 8), sy = (int)(sStickY * 8);
+    uint32_t held = sTouchHeld;
+    for (i = 0; i < 5; i++) base = (base ^ parts[i]) * 16777619u;
     if (!show) {
-        if (key != last) sGeneration++;
-        last = key;
+        if (base != lastBase || drawn) {
+            sGeneration++;
+            sPartOnly = 0;
+        }
+        lastBase = base;
+        drawn = 0;
         return opt;
     }
-    if (key != last || !sPx) {
+    if (base != lastBase || !sPx || !drawn) {
         if (w != sW || h != sH || !sPx) {
             free(sPx);
             sPx = (uint32_t*)malloc((size_t)w * h * 4);
@@ -889,9 +1023,37 @@ const uint32_t* menu_draw(int w, int h) {
         }
         if (opt) memcpy(sPx, opt, (size_t)w * h * 4);
         else memset(sPx, 0, (size_t)w * h * 4);
-        draw_controls();
+        draw_stick_base();
+        keep_stick_base();
+        draw_knob(sStickX, sStickY);
+        for (i = 0; i < BUTTONS; i++) draw_button(i, (held & kButtons[i].bit) != 0);
+        sPartOnly = 0;
         sGeneration++;
-        last = key;
+    } else if (held != drawnHeld || sx != drawnX || sy != drawnY) {
+        int box[4];
+        memset(sPart, 0, sizeof(sPart));
+        if (sx != drawnX || sy != drawnY) {
+            redraw_stick(opt, sStickX, sStickY);
+            grow(sPart, sStickBox);
+        }
+        for (i = 0; i < BUTTONS; i++) {
+            if (((held ^ drawnHeld) & kButtons[i].bit) == 0) continue;
+            control_box(&kButtons[i], box);
+            clear_box(opt, box);
+            draw_button(i, (held & kButtons[i].bit) != 0);
+            grow(sPart, box);
+        }
+        /* (A held bit with no button of its own, the stick's directions,
+         * changes nothing drawn.) */
+        if (sPart[2] && sPart[3]) {
+            sPartOnly = 1;
+            sGeneration++;
+        }
     }
+    lastBase = base;
+    drawnHeld = held;
+    drawnX = sx;
+    drawnY = sy;
+    drawn = 1;
     return sPx;
 }

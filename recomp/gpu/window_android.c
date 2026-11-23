@@ -365,7 +365,8 @@ static int find_game(const char* dir) {
  * give: env.txt in the shared folder, a NAME=value a line, then
  * env_test.txt, for a second test run's own. */
 static void read_env_file(const char* dir, const char* name) {
-    char path[1024], line[512];
+    static char line[16384]; /* (a long RECOMP_PAD_SCRIPT, as a loop of many runs is) */
+    char path[1024];
     FILE* f;
     snprintf(path, sizeof(path), "%s/%s", dir, name);
     if (!(f = fopen(path, "r"))) return;
