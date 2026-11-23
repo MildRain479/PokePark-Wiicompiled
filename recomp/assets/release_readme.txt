@@ -21,13 +21,22 @@ Steam Deck
 
 Settings
 - Options are in the pause menu (and on the save files screen):
-  display, keyboard, controller and gameplay. They are saved in
+  display, keyboard, controller, gameplay and audio. They are saved in
   settings.ini beside the program.
 - Renderer: Vulkan by default; OpenGL in Options > Display (from the
   next start). If Vulkan can't start, OpenGL is used.
 - Controllers: Xbox, PlayStation, Switch Pro, 8BitDo and most others,
   over USB or Bluetooth (read through SDL3), and keyboard and mouse.
   Buttons go by position: the bottom face button is A.
+- Languages: Options > Gameplay > Language. English is built in. For
+  Japanese, French, German, Italian or Spanish, choose it and press A:
+  it asks for your Japanese (R8AJ01) or European (R8AP01) disc image
+  and makes a language pack from it. The game itself still runs from
+  the USA disc.
+- Audio: music, sound effects and cries volumes, and the cries'
+  language, in Options > Audio.
+- RecompLauncher: recomplauncher.json lets RecompLauncher set the game
+  up, start it and show its settings.
 - Updates: at start it asks GitHub whether a newer version is out, and
   if so, Options > Display > Updates opens its download page. Turn the
   Updates setting off to stop it asking.
